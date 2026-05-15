@@ -280,6 +280,53 @@ def plot_correlation_heatmap(comparison_df, block_groups='all', title=None):
     for i, label in enumerate(labels):
         print(f"  {label:>10}: {corr_matrix.iloc[i, i]:.3f}")
 
+def plot_correlation_heatmap_normalized(comparison_df, block_groups='all', title=None):
+    """Spearman correlation heatmap: model _pt_ct vs actual _rate (per 1K pop)."""
+    from config import CRIME_CATEGORIES
+    
+    if block_groups == 'inside':
+        df = comparison_df[comparison_df['within_city'] == True]
+    elif block_groups == 'outside':
+        df = comparison_df[comparison_df['within_city'] == False]
+    else:
+        df = comparison_df
+
+    # Drop zero-population BGs
+    df = df[df['population'] > 0]
+
+    model_cols = []
+    actual_cols = []
+    labels = []
+    for cat in CRIME_CATEGORIES:
+        m_col = f'{cat}_pt_ct'
+        a_col = f'{cat}_rate'
+        if m_col in df.columns and a_col in df.columns:
+            model_cols.append(m_col)
+            actual_cols.append(a_col)
+            labels.append(cat)
+
+    corr_matrix = pd.DataFrame(index=labels, columns=labels, dtype=float)
+    for i, m_col in enumerate(model_cols):
+        for j, a_col in enumerate(actual_cols):
+            corr_matrix.iloc[i, j] = df[[m_col, a_col]].corr(method='spearman').iloc[0, 1]
+
+    if title is None:
+        scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
+        title = f"Spearman Correlation: Model vs Actuals (rate/1K) — {scope_label} ({len(df):,} BGs)"
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    sns.heatmap(corr_matrix.astype(float), annot=True, fmt='.3f', cmap='RdYlGn',
+                center=0, vmin=-0.2, vmax=1, ax=ax,
+                xticklabels=[f'{l}_rate' for l in labels],
+                yticklabels=[f'{l}_model' for l in labels])
+    ax.set_title(title)
+    plt.tight_layout()
+    plt.show()
+    
+    print(f"\nSame-category Spearman correlations — normalized ({scope_label}):")
+    for i, label in enumerate(labels):
+        print(f"  {label:>10}: {corr_matrix.iloc[i, i]:.3f}")
+
 
 def plot_lorenz_curve(comparison_df, crime_type='total', block_groups='all', title=None):
     """Lorenz curve + Gini coefficient: how well does the model concentrate actual crime risk?
@@ -341,5 +388,23 @@ def plot_lorenz_curve(comparison_df, crime_type='total', block_groups='all', tit
     plt.tight_layout()
     plt.show()
 
-    print(f"Gini coefficient: {gini:.3f}")
+    # Lift table at key cutoffs
+    print(f"\nGini coefficient: {gini:.3f}")
+    print(f"\n{'Top %':>8} {'Crime Captured':>16} {'Lift vs Random':>16}")
+    print("-" * 44)
+    for pct in [0.05, 0.10, 0.20, 0.30, 0.50]:
+        idx = min(int(pct * len(population_share)) - 1, len(cumulative_share) - 1)
+        if idx < 0:
+            idx = 0
+        captured = cumulative_share[idx]
+        lift = captured / pct
+        print(f"  {pct*100:>5.0f}%   {captured*100:>13.1f}%   {lift:>14.1f}x")
+
+    # Where do we capture 50% and 80% of crime?
+    for target in [0.50, 0.80]:
+        idx_target = np.searchsorted(cumulative_share, target)
+        if idx_target < len(population_share):
+            pct_needed = population_share[idx_target] * 100
+            print(f"  To capture {target*100:.0f}% of {crime_type}: need top {pct_needed:.1f}% of BGs")
+
     return gini

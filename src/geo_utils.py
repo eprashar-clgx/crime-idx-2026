@@ -193,3 +193,18 @@ def merge_model_with_actuals(bg_all, crisk_df):
     n_in = (merged['within_city'] == True).sum()
     print(f"  Inside city: {n_in:,} | Outside: {len(merged) - n_in:,}")
     return merged
+
+def normalize_actuals(comparison_df):
+    """Add _rate columns: actual counts normalized to per 1,000 population.
+    Skips BGs with zero population."""
+    df = comparison_df.copy()
+    count_cols = [c for c in df.columns if c.endswith('_count')]
+    for col in count_cols:
+        rate_col = col.replace('_count', '_rate')
+        df[rate_col] = (df[col] / df['population']) * 1000
+    # Replace inf/NaN from zero-population BGs
+    rate_cols = [c for c in df.columns if c.endswith('_rate')]
+    df[rate_cols] = df[rate_cols].replace([float('inf'), -float('inf')], float('nan'))
+    n_valid = df[rate_cols[0]].notna().sum()
+    print(f"Normalized actuals to rate/1K: {n_valid:,} BGs with population > 0")
+    return df
