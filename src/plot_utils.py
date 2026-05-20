@@ -130,7 +130,7 @@ def plot_crime_distribution(bg_cat_df, crime_type='total', block_groups='all', t
     else:
         df = bg_cat_df
 
-    col = f'{crime_type}_count' if crime_type != 'total' else 'total_count'
+    col = f'{crime_type}_count' 
     if col not in df.columns:
         print(f"Column '{col}' not found. Available: {[c for c in df.columns if c.endswith('_count')]}")
         return
@@ -418,7 +418,7 @@ def plot_bg_choropleth(bg_gdf, city_gdf, crime_type='total', block_groups='all',
         vmax: If int 1-100, treated as percentile. If float > 100, used as raw value.
               If None, uses data max.
     """
-    col = f'{crime_type}_count' if crime_type != 'total' else 'total_count'
+    col = f'{crime_type}_count'
     
     if block_groups == 'inside':
         df = bg_gdf[bg_gdf['within_city'] == True]

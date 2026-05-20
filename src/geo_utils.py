@@ -1,6 +1,8 @@
 import pandas as pd
 import geopandas as gpd
 from config import CityConfig, DATA_DIR, PLACES_PATH
+import pyreadstat
+from config import MODEL_SAV
 
 def load_city_boundary(cfg: CityConfig) -> gpd.GeoDataFrame:
     """Load city polygon from US Census places shapefile."""
@@ -133,6 +135,7 @@ def aggregate_by_bg_category(crime_bg: gpd.GeoDataFrame) -> pd.DataFrame:
                                + result['rape_count'] + result['robbery_count'])
     result['property_count'] = (result['burglary_count'] + result['larceny_count']
                                 + result['mvt_count'])
+    result['cl_total_count'] = (result['violent_count'] + result['property_count'])
     
     result['within_city'] = result['within_city'].astype(bool)
     result['county_fips'] = result['bg_key'].str[:5]
@@ -167,8 +170,6 @@ def merge_all_bgs_with_crimes(bg_gdf, bg_cat_df):
 
 def load_model_data(bg_all):
     """Load crime risk model .sav, filter to BGs in our analysis set."""
-    import pyreadstat
-    from config import MODEL_SAV
     crisk_df, meta = pyreadstat.read_sav(str(MODEL_SAV))
     # Filter to our universe
     crisk_filtered = crisk_df[crisk_df['bg_key'].isin(bg_all['geoid'])].copy()
