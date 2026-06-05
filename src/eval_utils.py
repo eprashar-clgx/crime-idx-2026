@@ -81,3 +81,18 @@ def merge_evals_with_crime(eval_bg, comparison_df):
     n_matched = len(merged)
     print(f"Merged: {n_matched:,} of {n_eval:,} eval BGs matched to city crime data ({n_matched/n_eval*100:.1f}%)")
     return merged
+
+def extract_national_rates(path=None):
+    """
+    Extract national crime rates (*_pt_u columns) from evals parquet
+    These are constant across all rows - take first non-null value for each
+    """
+    path = path or EVALS_PATH
+    df = pd.read_parquet(path, engine='fastparquet')
+    df.columns = df.columns.str.lower().str.replace(' ','_').str.replace('#','num')
+    pt_u_cols = [c for c in df.columns if c.endswith('_pt_u')]
+    # Since these values are repeated through the dataframe, we can just pick the first one 
+    # Saved as a dictionary for easy lookup using keys instead of relying on idx
+    national = df[pt_u_cols].dropna().iloc[0].round(3).to_dict()
+    print(f"National rates extracted: {national}")
+    return national

@@ -7,6 +7,7 @@ NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
 BOUNDARIES_DIR = DATA_DIR / "boundaries"
 PLACES_PATH = BOUNDARIES_DIR / "cb_2024_us_place_500k"
 MODEL_SAV = DATA_DIR / "ns" / "location_inc_ns4_2025q4_block_group_data.sav"
+LODES_PATH = DATA_DIR / "ns" / "location_inc_spatial_lodes_wac_2022_block_jobs.csv"
 
 # NIBRS → model category mapping (Houston)
 NIBRS_TO_CATEGORY = {
@@ -40,7 +41,7 @@ CHICAGO_FBI_TO_CATEGORY = {
 CRIME_CATEGORIES = [
     'assault', 'burglary', 'larceny', 'murder', 'mvt',
     'rape', 'robbery', 'vandal', 'fire',
-    'violent', 'property', 'total',
+    'violent', 'property', 'total', 'cl_total', 'wtotal', 'wprop'
 ]
 
 @dataclass

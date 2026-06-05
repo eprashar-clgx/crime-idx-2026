@@ -2,7 +2,7 @@ import pandas as pd
 import geopandas as gpd
 from config import CityConfig, DATA_DIR, PLACES_PATH
 import pyreadstat
-from config import MODEL_SAV
+from config import MODEL_SAV, LODES_PATH
 
 def load_city_boundary(cfg: CityConfig) -> gpd.GeoDataFrame:
     """Load city polygon from US Census places shapefile."""
@@ -127,14 +127,14 @@ def aggregate_by_bg_category(crime_bg: gpd.GeoDataFrame) -> pd.DataFrame:
     
     # Composites
     for col in ['assault_count', 'murder_count', 'rape_count', 'robbery_count',
-                'burglary_count', 'larceny_count', 'mvt_count']:
+                'burglary_count', 'larceny_count', 'mvt_count', 'vandal_count']:
         if col not in result.columns:
             result[col] = 0
     
     result['violent_count'] = (result['assault_count'] + result['murder_count']
                                + result['rape_count'] + result['robbery_count'])
     result['property_count'] = (result['burglary_count'] + result['larceny_count']
-                                + result['mvt_count'])
+                                + result['mvt_count']) #+ result['vandal_count']) # Vandalism isn't included
     result['cl_total_count'] = (result['violent_count'] + result['property_count'])
     
     result['within_city'] = result['within_city'].astype(bool)
@@ -143,6 +143,11 @@ def aggregate_by_bg_category(crime_bg: gpd.GeoDataFrame) -> pd.DataFrame:
     n_in = result['within_city'].sum()
     print(f"BG-level category aggregation: {len(result):,} BGs "
           f"({n_in:,} within city, {len(result)-n_in:,} outside)")
+    print("="*80)
+    print("Crime Totals:")
+    print(result[['assault_count', 'murder_count', 'rape_count', 'robbery_count',
+                'burglary_count', 'larceny_count', 'mvt_count', 'vandal_count',
+                'violent_count','property_count','cl_total_count']].sum())
     result = gpd.GeoDataFrame(result, geometry='bg_geo', crs="EPSG:4326")
     return result
 
@@ -195,17 +200,92 @@ def merge_model_with_actuals(bg_all, crisk_df):
     print(f"  Inside city: {n_in:,} | Outside: {len(merged) - n_in:,}")
     return merged
 
-def normalize_actuals(comparison_df):
+def normalize_actuals(comparison_df, lodes_bg=None):
     """Add _rate columns: actual counts normalized to per 1,000 population.
     Skips BGs with zero population."""
     df = comparison_df.copy()
     count_cols = [c for c in df.columns if c.endswith('_count')]
+    # Rate per 1K population
     for col in count_cols:
         rate_col = col.replace('_count', '_rate')
         df[rate_col] = (df[col] / df['population']) * 1000
+
+    # Daytime adjusted: rate per 1K (population + jobs)
+    if lodes_bg is not None:
+        df = df.merge(lodes_bg, on='geoid', how='left')
+        df['c000'] = df['c000'].fillna(0)
+        df['daytime_pop'] = df['population'] + df['c000']
+        for col in count_cols:
+            rate_col = col.replace('_count', '_rate_daytime')
+            df[rate_col] = (df[col] / df['daytime_pop']) * 1000
+    
     # Replace inf/NaN from zero-population BGs
-    rate_cols = [c for c in df.columns if c.endswith('_rate')]
+    rate_cols = [c for c in df.columns if '_rate' in c]
     df[rate_cols] = df[rate_cols].replace([float('inf'), -float('inf')], float('nan'))
-    n_valid = df[rate_cols[0]].notna().sum()
+    n_valid = df[[c for c in df.columns if c.endswith('_rate')]].iloc[:,0].notna().sum()
     print(f"Normalized actuals to rate/1K: {n_valid:,} BGs with population > 0")
+    if lodes_bg is not None:
+        n_daytime = df['daytime_pop'].gt(0).sum()
+        print(f"Daytime-adjusted rates: {n_daytime:,} BGs with daytime_pop > 0")
+    return df
+
+def load_lodes_bg(path=None):
+    """
+    Load LODES data, aggregate jobs (C000) to block group level
+    """
+    path = path or LODES_PATH
+    lodes = pd.read_csv(path)
+    # block keys are missing leading zeroes so add that
+    lodes['block_key'] = lodes['block_key'].astype(str).str.zfill(15)
+    lodes['geoid'] = lodes['block_key'].str[:12]  # first 12 digits represent the block group
+    bg_jobs = lodes.groupby('geoid')['C000'].sum().reset_index()
+    bg_jobs.rename(columns={'C000':'c000'}, inplace=True)
+    print(f"LODES loaded: {len(lodes):,} blocks -> {len(bg_jobs):,} block groups")
+    return bg_jobs
+
+def compute_weighted_scores(comparison_df, national_rates):
+    """
+    Compute equal-representation weighted crime scores.
+    Each of the 7 primary crime types contributes equally (1/7) to total.
+    Each of the 3 property crimes contributes equally (1/3) to property.
+
+    Parameters:
+    -----------
+    comparison_df: DataFrame with *_rate_columns (per 1K population)
+    national_rates: dict with keys like 'murder_pt_u', 'assault_pt_u', etc.
+
+    Returns
+    ----------
+    Dataframe with wtotal_rel, wprop_rel, wtotal_rate, wprop_rate columns added.
+    """
+    df = comparison_df.copy()
+    primary_crimes = ['murder', 'rape', 'robbery', 'assault', 'burglary', 'larceny', 'mvt']
+    property_crimes = ['burglary', 'larceny', 'mvt']
+
+    # Compute relative risk for each crime type
+    for crime in primary_crimes:
+        rate_col = f'{crime}_rate'
+        nat_key = f'{crime}_pt_u'
+        if rate_col in df.columns and nat_key in national_rates:
+            df[f'{crime}_rel'] = df[rate_col] / national_rates[nat_key]
+    
+    # Equal weight total (1/7 each)
+    rel_cols_total = [f'{c}_rel' for c in primary_crimes if f'{c}_rel' in df.columns]
+    df['wtotal_rel'] = df[rel_cols_total].mean(axis=1)
+
+    # Equal-weight property (1/3 each)
+    rel_cols_prop = [f'{c}_rel' for c in property_crimes if f'{c}_rel' in df.columns]
+    df['wprop_rel'] = df[rel_cols_prop].mean(axis=1)
+    
+
+    # Scale back to interpretable rate (per 1K)
+    nat_total = national_rates.get('violent_pt_u',0) + national_rates.get('property_pt_u',0)
+    nat_prop = national_rates.get('property_pt_u',0)
+    df['wtotal_rate'] = df['wtotal_rel'] * nat_total
+    df['wprop_rate'] = df['wprop_rel'] * nat_prop
+
+    # Clean up intermediate columns
+    df = df.drop(columns=[f'{c}_rel' for c in primary_crimes if f'{c}_rel' in df.columns])
+    print(f"Weighted scores computed: wtotal_rel median = {df['wtotal_rel'].median():.2f}, "
+          f"wprop_rel median={df['wprop_rel'].median():.2f}")
     return df

@@ -113,129 +113,85 @@ def folium_bg_crimes(bg_agg_gdf, city_gdf, crime_bg, cfg, output_dir):
     print(f"Saved {out_path}")
     return m
 
-def plot_crime_distribution(bg_cat_df, crime_type='total', block_groups='all', title=None):
-    """Plot crime distribution histogram + percentiles for a given crime type and BG scope.
+def plot_distribution(df, crime_type='cl_total', suffix='count', block_groups='all', title=None):
+    """Plot distribution histogram + percentiles for any crime metric.
     
     Args:
-        bg_cat_df: DataFrame from aggregate_by_bg_category()
-        crime_type: 'total', 'assault', 'burglary', 'violent', 'property', etc.
+        df: DataFrame (bg_cat, bg_all, or comparison)
+        crime_type: 'cl_total', 'assault', 'violent', 'property', etc.
+        suffix: 'count', 'pt_ct', 'rate', 'rate_daytime'
         block_groups: 'all', 'inside', or 'outside'
         title: optional custom title
     """
-    # Filter by scope
     if block_groups == 'inside':
-        df = bg_cat_df[bg_cat_df['within_city'] == True]
+        df = df[df['within_city'] == True]
     elif block_groups == 'outside':
-        df = bg_cat_df[bg_cat_df['within_city'] == False]
-    else:
-        df = bg_cat_df
+        df = df[df['within_city'] == False]
 
-    col = f'{crime_type}_count' 
+    col = f'{crime_type}_{suffix}'
     if col not in df.columns:
-        print(f"Column '{col}' not found. Available: {[c for c in df.columns if c.endswith('_count')]}")
+        print(f"Column '{col}' not found. Available: {[c for c in df.columns if c.endswith(f'_{suffix}')]}")
         return
 
     values = df[col]
+    scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
+    suffix_label = {'count': 'Crime Count', 'pt_ct': 'Model Score (per 1K pop)', 
+                    'rate': 'Rate (per 1K pop)', 'rate_daytime': 'Rate (per 1K daytime pop)'}
+    x_label = f"{crime_type.title()} {suffix_label.get(suffix, suffix)}"
+    
     if title is None:
-        scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
-        title = f"{crime_type.title()} Crime Distribution — {scope_label} ({len(df):,} BGs)"
+        title = f"{x_label} Distribution — {scope_label} ({len(df):,} BGs)"
+
+    # Use more decimal places for rates/scores, integers for counts
+    is_integer = suffix == 'count'
+    fmt_val = lambda v: f"{v:>8.0f}" if is_integer else f"{v:>10.3f}"
+    fmt_pline = lambda v: f"{v:.0f}" if is_integer else f"{v:.1f}"
 
     print(f"\n{title}")
     print("=" * 60)
     print(values.describe().round(3).to_string())
     n_zero = (values == 0).sum()
-    print(f"Block groups with zero {crime_type}: {n_zero:,} / {len(df):,} ({n_zero/len(df)*100:.1f}%)")
+    print(f"Block groups with zero: {n_zero:,} / {len(df):,} ({n_zero/len(df)*100:.1f}%)")
     print("-" * 60)
-    percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-    for p in percentiles:
+    for p in [1, 5, 10, 25, 50, 75, 90, 95, 99]:
         val = values.quantile(p / 100)
         count_ge = (values >= val).sum()
-        print(f"  P{p:>2}: {val:>8.0f}   ({count_ge:,} BGs >= this)")
+        print(f"  P{p:>2}: {fmt_val(val)}   ({count_ge:,} BGs >= this)")
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
     axes[0].hist(values, bins=50, edgecolor='black', alpha=0.7)
     for p, color in [(95, 'orange'), (99, 'red')]:
         val = values.quantile(p / 100)
-        axes[0].axvline(val, color=color, linestyle='--', linewidth=2, label=f'P{p} = {val:.0f}')
+        axes[0].axvline(val, color=color, linestyle='--', linewidth=2, label=f'P{p} = {fmt_pline(val)}')
     axes[0].legend()
     axes[0].set_title('Distribution')
-    axes[0].set_xlabel(f'{crime_type.title()} Count')
+    axes[0].set_xlabel(x_label)
     axes[0].set_ylabel('Number of Block Groups')
 
     axes[1].hist(values, bins=50, edgecolor='black', alpha=0.7)
     axes[1].set_yscale('log')
     for p, color in [(5, 'blue'), (95, 'orange'), (99, 'red')]:
         val = values.quantile(p / 100)
-        axes[1].axvline(val, color=color, linestyle='--', linewidth=2, label=f'P{p} = {val:.0f}')
+        axes[1].axvline(val, color=color, linestyle='--', linewidth=2, label=f'P{p} = {fmt_pline(val)}')
     axes[1].legend()
     axes[1].set_title('Log Scale')
-    axes[1].set_xlabel(f'{crime_type.title()} Count')
+    axes[1].set_xlabel(x_label)
     axes[1].set_ylabel('Block Groups (log)')
 
     plt.suptitle(title)
     plt.tight_layout()
     plt.show()
 
-def plot_model_distribution(comparison_df, crime_type='total', block_groups='all', title=None):
-    """Plot model score (_pt_ct) distribution + percentiles, same format as plot_crime_distribution."""
-    if block_groups == 'inside':
-        df = comparison_df[comparison_df['within_city'] == True]
-    elif block_groups == 'outside':
-        df = comparison_df[comparison_df['within_city'] == False]
-    else:
-        df = comparison_df
-
-    col = f'{crime_type}_pt_ct'
-    if col not in df.columns:
-        print(f"Column '{col}' not found. Available: {[c for c in df.columns if c.endswith('_pt_ct')]}")
-        return
-
-    values = df[col]
-    if title is None:
-        scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
-        title = f"Model {crime_type.title()} Score Distribution — {scope_label} ({len(df):,} BGs)"
-
-    print(f"\n{title}")
-    print("=" * 60)
-    print(values.describe().round(3).to_string())
-    n_zero = (values == 0).sum()
-    print(f"Block groups with zero {crime_type} score: {n_zero:,} / {len(df):,} ({n_zero/len(df)*100:.1f}%)")
-    print("-" * 60)
-    percentiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
-    for p in percentiles:
-        val = values.quantile(p / 100)
-        count_ge = (values >= val).sum()
-        print(f"  P{p:>2}: {val:>10.3f}   ({count_ge:,} BGs >= this)")
-
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    axes[0].hist(values, bins=50, edgecolor='black', alpha=0.7)
-    for p, color in [(95, 'orange'), (99, 'red')]:
-        val = values.quantile(p / 100)
-        axes[0].axvline(val, color=color, linestyle='--', linewidth=2, label=f'P{p} = {val:.1f}')
-    axes[0].legend()
-    axes[0].set_title('Distribution')
-    axes[0].set_xlabel(f'{crime_type.title()} Model Score (per 1K pop)')
-    axes[0].set_ylabel('Number of Block Groups')
-
-    axes[1].hist(values, bins=50, edgecolor='black', alpha=0.7)
-    axes[1].set_yscale('log')
-    for p, color in [(5, 'blue'), (95, 'orange'), (99, 'red')]:
-        val = values.quantile(p / 100)
-        axes[1].axvline(val, color=color, linestyle='--', linewidth=2, label=f'P{p} = {val:.1f}')
-    axes[1].legend()
-    axes[1].set_title('Log Scale')
-    axes[1].set_xlabel(f'{crime_type.title()} Model Score (per 1K pop)')
-    axes[1].set_ylabel('Block Groups (log)')
-
-    plt.suptitle(title)
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_correlation_heatmap(comparison_df, block_groups='all', title=None):
-    """Spearman correlation heatmap: model _pt_ct vs actual _count for all crime categories."""
+def plot_correlation_heatmap(comparison_df, block_groups='all', actual_suffix='count', title=None):
+    """Spearman correlation heatmap: model _pt_ct vs actual crime measures.
+    
+    Args:
+        comparison_df: DataFrame with model and actual columns.
+        block_groups: 'all', 'inside', or 'outside'.
+        actual_suffix: 'count', 'rate', or 'rate_daytime' — determines which actual columns to use.
+        title: Optional custom title.
+    """
     from config import CRIME_CATEGORIES
     
     if block_groups == 'inside':
@@ -244,92 +200,50 @@ def plot_correlation_heatmap(comparison_df, block_groups='all', title=None):
         df = comparison_df[comparison_df['within_city'] == False]
     else:
         df = comparison_df
+
+    # Drop zero-population BGs for rate-based comparisons
+    if actual_suffix in ('rate', 'rate_daytime'):
+        df = df[df['population'] > 0]
 
     # Build pairs
     model_cols = []
     actual_cols = []
     labels = []
-    for cat in CRIME_CATEGORIES:
+    for cat in CRIME_CATEGORIES: # e.g. assault, property etc.
         m_col = f'{cat}_pt_ct'
-        a_col = f'{cat}_count'
+        a_col = f'{cat}_{actual_suffix}'
         if m_col in df.columns and a_col in df.columns:
             model_cols.append(m_col)
             actual_cols.append(a_col)
             labels.append(cat)
 
-    # Compute Spearman correlation matrix between model and actuals
+    # Compute Spearman correlation matrix
     corr_matrix = pd.DataFrame(index=labels, columns=labels, dtype=float)
     for i, m_col in enumerate(model_cols):
         for j, a_col in enumerate(actual_cols):
             corr_matrix.iloc[i, j] = df[[m_col, a_col]].corr(method='spearman').iloc[0, 1]
 
+    scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
+    suffix_label = {'count': 'raw counts', 'rate': 'rate/1K pop', 'rate_daytime': 'rate/1K daytime pop'}
     if title is None:
-        scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
-        title = f"Spearman Correlation: Model vs Actuals — {scope_label} ({len(df):,} BGs)"
+        title = (f"Spearman Correlation: Model vs Actuals ({suffix_label.get(actual_suffix, actual_suffix)}) "
+                 f"— {scope_label} ({len(df):,} BGs)")
 
     fig, ax = plt.subplots(figsize=(12, 10))
     sns.heatmap(corr_matrix.astype(float), annot=True, fmt='.3f', cmap='RdYlGn',
                 center=0, vmin=-0.2, vmax=1, ax=ax,
-                xticklabels=[f'{l}_actual' for l in labels],
+                xticklabels=[f'{l}_{actual_suffix}' for l in labels],
                 yticklabels=[f'{l}_model' for l in labels])
     ax.set_title(title)
     plt.tight_layout()
     plt.show()
     
-    # Print diagonal (same-category correlations)
-    print(f"\nSame-category Spearman correlations ({scope_label}):")
-    for i, label in enumerate(labels):
-        print(f"  {label:>10}: {corr_matrix.iloc[i, i]:.3f}")
-
-def plot_correlation_heatmap_normalized(comparison_df, block_groups='all', title=None):
-    """Spearman correlation heatmap: model _pt_ct vs actual _rate (per 1K pop)."""
-    from config import CRIME_CATEGORIES
-    
-    if block_groups == 'inside':
-        df = comparison_df[comparison_df['within_city'] == True]
-    elif block_groups == 'outside':
-        df = comparison_df[comparison_df['within_city'] == False]
-    else:
-        df = comparison_df
-
-    # Drop zero-population BGs
-    df = df[df['population'] > 0]
-
-    model_cols = []
-    actual_cols = []
-    labels = []
-    for cat in CRIME_CATEGORIES:
-        m_col = f'{cat}_pt_ct'
-        a_col = f'{cat}_rate'
-        if m_col in df.columns and a_col in df.columns:
-            model_cols.append(m_col)
-            actual_cols.append(a_col)
-            labels.append(cat)
-
-    corr_matrix = pd.DataFrame(index=labels, columns=labels, dtype=float)
-    for i, m_col in enumerate(model_cols):
-        for j, a_col in enumerate(actual_cols):
-            corr_matrix.iloc[i, j] = df[[m_col, a_col]].corr(method='spearman').iloc[0, 1]
-
-    if title is None:
-        scope_label = {'all': 'All BGs', 'inside': 'Inside City', 'outside': 'Outside City'}[block_groups]
-        title = f"Spearman Correlation: Model vs Actuals (rate/1K) — {scope_label} ({len(df):,} BGs)"
-
-    fig, ax = plt.subplots(figsize=(12, 10))
-    sns.heatmap(corr_matrix.astype(float), annot=True, fmt='.3f', cmap='RdYlGn',
-                center=0, vmin=-0.2, vmax=1, ax=ax,
-                xticklabels=[f'{l}_rate' for l in labels],
-                yticklabels=[f'{l}_model' for l in labels])
-    ax.set_title(title)
-    plt.tight_layout()
-    plt.show()
-    
-    print(f"\nSame-category Spearman correlations — normalized ({scope_label}):")
+    print(f"\nSame-category Spearman correlations — {actual_suffix} ({scope_label}):")
     for i, label in enumerate(labels):
         print(f"  {label:>10}: {corr_matrix.iloc[i, i]:.3f}")
 
 
-def plot_lorenz_curve(comparison_df, crime_type='total', block_groups='all', title=None):
+def plot_lorenz_curve(comparison_df, crime_type='cl_total', block_groups='all', title=None):
     """Lorenz curve + Gini coefficient: how well does the model concentrate actual crime risk?
     
     Sorts BGs by model score, then plots cumulative share of actual crime.
@@ -342,7 +256,10 @@ def plot_lorenz_curve(comparison_df, crime_type='total', block_groups='all', tit
     else:
         df = comparison_df
 
-    model_col = f'{crime_type}_pt_ct'
+    if crime_type == 'cl_total':
+        model_col = f'total_pt_ct'
+    else:
+        model_col = f'{crime_type}_pt_ct' 
     actual_col = f'{crime_type}_count'
     
     if model_col not in df.columns or actual_col not in df.columns:
@@ -408,9 +325,9 @@ def plot_lorenz_curve(comparison_df, crime_type='total', block_groups='all', tit
             pct_needed = population_share[idx_target] * 100
             print(f"  To capture {target*100:.0f}% of {crime_type}: need top {pct_needed:.1f}% of BGs")
 
-    return gini
+    return (gini.round(2))
 
-def plot_bg_choropleth(bg_gdf, city_gdf, crime_type='total', block_groups='all',
+def plot_bg_choropleth(bg_gdf, city_gdf, crime_type='cl_total', block_groups='all',
                        cmap='YlOrRd', title=None, vmax=None):
     """Choropleth map of block groups colored by crime count.
     
@@ -534,7 +451,7 @@ def plot_carrier_lorenz(df, risk_score_col, outcome_col, exposure_col='earned_ex
         plt.tight_layout()
         plt.show()
 
-    return gini
+    return (gini.round(2))
 
 
 def plot_carrier_lorenz_multi(df, risk_score_cols, outcome_col, exposure_col='earned_exposures',
