@@ -31,10 +31,25 @@ def label_bgs_within_city(bg_gdf: gpd.GeoDataFrame, city_gdf: gpd.GeoDataFrame) 
     print(f"Block groups within city: {n_in:,} / {len(bg):,}")
     return bg
 
-def load_crime_data(cfg: CityConfig) -> gpd.GeoDataFrame:
+def load_crime_data(cfg: CityConfig, csv_path: str = None) -> gpd.GeoDataFrame:
     """Load crime CSV, drop missing coords, return GeoDataFrame."""
-    df = pd.read_csv(DATA_DIR / cfg.crime_csv, on_bad_lines='skip', engine='python')
+    path = DATA_DIR / (csv_path or cfg.crime_csv)
+    df = pd.read_csv(path, on_bad_lines='skip', engine='python')
     df.columns = df.columns.str.lower().str.replace(' ', '_')
+    # Normalize variations like 'maplatitude' → 'map_latitude'
+    df = df.rename(columns={
+        'maplatitude': 'map_latitude',
+        'maplongitude': 'map_longitude',
+        'nibrsclass': 'nibrs_class',
+        'nibrsdescription': 'nibrs_description',
+        'rmsoccurrencedate': 'occurrence_date',
+        'rmsoccurrencehour': 'occurrence_hour',
+        'offensecount': 'offense_count',
+        'streetno': 'street_number',
+        'streetname': 'street_name',
+        'streettype': 'street_type',
+        'zipcode': 'zip_code'
+        })
     valid = df.dropna(subset=[cfg.lat_col, cfg.lon_col])
     gdf = gpd.GeoDataFrame(
         valid,
