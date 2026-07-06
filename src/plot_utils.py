@@ -192,7 +192,7 @@ def plot_correlation_heatmap(comparison_df, block_groups='all', actual_suffix='c
         actual_suffix: 'count', 'rate', or 'rate_daytime' — determines which actual columns to use.
         title: Optional custom title.
     """
-    from config import CRIME_CATEGORIES
+    from src.core.config import CRIME_CATEGORIES
     
     if block_groups == 'inside':
         df = comparison_df[comparison_df['within_city'] == True]

@@ -1,8 +1,8 @@
 import pandas as pd
 import geopandas as gpd
-from config import CityConfig, DATA_DIR, PLACES_PATH
+from src.core.config import CityConfig, DATA_DIR, PLACES_PATH
 import pyreadstat
-from config import MODEL_SAV, LODES_PATH
+from src.core.config import MODEL_SAV, LODES_PATH
 
 def load_city_boundary(cfg: CityConfig) -> gpd.GeoDataFrame:
     """Load city polygon from US Census places shapefile."""

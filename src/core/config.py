@@ -1,7 +1,7 @@
 from pathlib import Path
 from dataclasses import dataclass, field
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
 BOUNDARIES_DIR = DATA_DIR / "boundaries"
@@ -81,3 +81,18 @@ CITIES = {
         crime_type_mapping=CHICAGO_FBI_TO_CATEGORY,
     ),
 }
+
+# --- BigQuery projects / datasets ---
+BQ_PROJECT         = "clgx-gis-app-dev-06e3"        # billing + GIS/boundary + staging
+IDAP_PROJECT       = "clgx-idap-bigquery-prd-a990"  # enterprise property data
+BOUNDARY_DATASET   = "boundary"
+BQ_STAGING_DATASET = "work_eprashar"                # where feature build tables land
+
+# --- GCS + data tiers ---
+GCS_PROJECT = "clgx-gis-app-dev-06e3"
+GCS_ROOT    = "gs://geospatial-projects/location_inc"
+UCR_YEAR    = 2024
+
+RAW_DIR       = DATA_DIR / "raw"
+INTERIM_DIR   = DATA_DIR / "interim"
+PROCESSED_DIR = DATA_DIR / "processed"
