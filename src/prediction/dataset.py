@@ -15,9 +15,14 @@ TARGET_CATEGORIES = [
 
 # predictors that vary within a single city (Division is constant per-city → excluded)
 PREDICTOR_COLS = [
-    "det_pct", "in_household_pct", "moved1yr_pct",
-    "city_centers_dist", "pop_est_5mile", "pop_ch_1mile",
-    "vacant_pct", "clip_liens_pct",
+    "det_pct", # Percentage of housing units that are single family detached houses
+    "in_household_pct", # Percent of the population living in households
+    "moved1yr_pct", # Percentage of households moving in past year
+    "city_centers_dist", # Distance in miles from central business district of nearest city
+    "pop_est_5mile", # Population density within 5 miles 
+    "pop_ch_1mile", # Population change within 1 mile
+    "vacant_pct",
+    "clip_liens_pct",
 ]
 
 ZERO_FILL   = ["vacant_pct", "clip_liens_pct"]                       # 0 = none observed
