@@ -4,10 +4,18 @@ from dataclasses import dataclass, field
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 NOTEBOOKS_DIR = PROJECT_ROOT / "notebooks"
-BOUNDARIES_DIR = DATA_DIR / "boundaries"
-PLACES_PATH = BOUNDARIES_DIR / "cb_2024_us_place_500k"
-MODEL_SAV = DATA_DIR / "ns" / "location_inc_ns4_2025q4_block_group_data.sav"
-LODES_PATH = DATA_DIR / "ns" / "location_inc_spatial_lodes_wac_2022_block_jobs.csv"
+
+# data tiers
+RAW_DIR       = DATA_DIR / "raw"
+INTERIM_DIR   = DATA_DIR / "interim"
+PROCESSED_DIR = DATA_DIR / "processed"
+
+# raw sources (post-reorg locations)
+BOUNDARIES_DIR = RAW_DIR / "boundaries"
+PLACES_PATH    = BOUNDARIES_DIR / "cb_2024_us_place_500k"
+MODEL_SAV      = RAW_DIR / "neighborhood_scout" / "location_inc_ns4_2025q4_block_group_data.sav"
+LODES_PATH     = RAW_DIR / "lodes" / "location_inc_spatial_lodes_wac_2022_block_jobs.csv"
+
 
 # NIBRS → model category mapping (Houston)
 NIBRS_TO_CATEGORY = {
@@ -64,7 +72,7 @@ CITIES = {
         name="Houston",
         state_fips="48",
         place_fips="35000",
-        crime_csv="public/houston/NIBRSPublicView2025.csv",
+        crime_csv="raw/city_crime/houston/NIBRSPublicView2025.csv",
         lat_col="map_latitude",
         lon_col="map_longitude",
         crime_type_col="nibrs_class",
@@ -74,7 +82,7 @@ CITIES = {
         name="Chicago",
         state_fips="17",
         place_fips="14000",
-        crime_csv="public/chicago/Crimes_-_2025_20260514.csv",
+        crime_csv="raw/city_crime/chicago/Crimes_-_2025_20260514.csv",
         lat_col="latitude",
         lon_col="longitude",
         crime_type_col="fbi_code",
@@ -93,6 +101,3 @@ GCS_PROJECT = "clgx-gis-app-dev-06e3"
 GCS_ROOT    = "gs://geospatial-projects/location_inc"
 UCR_YEAR    = 2024
 
-RAW_DIR       = DATA_DIR / "raw"
-INTERIM_DIR   = DATA_DIR / "interim"
-PROCESSED_DIR = DATA_DIR / "processed"
