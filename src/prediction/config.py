@@ -25,8 +25,15 @@ FEATURE_SOURCES = {
     location="liens",          # → sql/pull/liens.sql
     key_col="geoid",
     feature_cols=("clip_liens_pct",),
-),
-}
+    ),
+    "foreclosures": FeatureSource(
+    name="foreclosures",
+    backend="bq",
+    location="foreclosures",     # → sql/pull/foreclosures.sql
+    key_col="geoid",
+    feature_cols=("clip_foreclosure_pct",),
+    ),
+    }
 
 def source_parquet(name: str) -> str:
     return INTERIM_DIR / "sources" / f"{name}.parquet"
