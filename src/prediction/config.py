@@ -33,6 +33,28 @@ FEATURE_SOURCES = {
     key_col="geoid",
     feature_cols=("clip_foreclosure_pct",),
     ),
+
+    "seven_eleven": FeatureSource(
+        name="seven_eleven",
+        backend="bq",
+        location="seven_eleven",      # → sql/pull/seven_eleven.sql
+        key_col="geoid",
+        feature_cols=("unq_seven_eleven_clips",),
+    ),
+    "gas_stations": FeatureSource(
+        name="gas_stations",
+        backend="bq",
+        location="gas_stations",      # → sql/pull/gas_stations.sql
+        key_col="geoid",
+        feature_cols=("unq_gas_station_clips",),
+    ),
+    "liquor_stores": FeatureSource(
+        name="liquor_stores",
+        backend="bq",
+        location="liquor_stores",     # → sql/pull/liquor_stores.sql
+        key_col="geoid",
+        feature_cols=("unq_liquor_store_clips",),
+    ),
     }
 
 def source_parquet(name: str) -> str:

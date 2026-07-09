@@ -23,9 +23,20 @@ PREDICTOR_COLS = [
     "pop_ch_1mile", # Population change within 1 mile
     "vacant_pct",
     "clip_liens_pct",
+    "clip_foreclosure_pct",
+    "unq_seven_eleven_clips",
+    "unq_gas_station_clips",
+    "unq_liquor_store_clips",
 ]
 
-ZERO_FILL   = ["vacant_pct", "clip_liens_pct"]                       # 0 = none observed
+ZERO_FILL   =  [
+    "vacant_pct",
+    "clip_liens_pct",
+    "clip_foreclosure_pct",
+    "unq_seven_eleven_clips",
+    "unq_gas_station_clips",
+    "unq_liquor_store_clips"
+    ]                       # 0 = none observed
 MEDIAN_FILL = ["city_centers_dist", "pop_est_5mile", "pop_ch_1mile"] # 0 would be wrong
 
 
@@ -85,6 +96,7 @@ def build_model_table(city: str, refresh: bool = False,
 
     out = PROCESSED_DIR / "prediction" / f"{city}_model_table.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
+    df[PREDICTOR_COLS] = df[PREDICTOR_COLS].apply(pd.to_numeric, errors="coerce").astype("float64")
     df.to_parquet(out)
     print(f"{city}: model table {df.shape} → {out.relative_to(PROCESSED_DIR.parent.parent)}")
     return df
