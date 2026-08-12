@@ -148,6 +148,38 @@ recommended first cut.
 
 ---
 
+### 3.7 Risky-facility co-location (stop ↔ 7-Eleven / liquor store / ATM)
+- **Theory:** RTM (**risky facilities**), Crime Pattern (attractors), RAT (suitable target = cash /
+  disinhibition). Convenience stores (late hours, single clerk, cash), liquor/alcohol outlets, and
+  ATMs are among the most consistently replicated micro-place risk factors in the RTM / risky-
+  facilities literature (Eck, Clarke & Guerette; Bernasco & Block).
+- **H7:** A transit stop within a short walk (~100–150 m) of a convenience store, liquor/alcohol
+  outlet, or ATM has elevated robbery/theft risk; BGs with more such **co-located** stops show
+  higher property-crime `logcount`, net of overall stop density (i.e. it's the *pairing*, not just
+  more stops or more stores).
+- **Feature shapes (build at stop level, then aggregate to BG — see §4.3):**
+  - Stop-level flag `near_risky(s)` = 1 if any target facility within radius $r$.
+  - Stop-level **count** or **distance** to nearest facility of each category (keep categories
+    separate first — ATM vs liquor vs convenience may load differently by crime type).
+  - RTM-style stop risk = proximity-weighted sum of facility layers (inverse-distance or
+    kernel), rather than a hard radius.
+  - BG aggregates: count of risky stops, **share** = risky_stops / total_stops, density / km².
+  - **Offering advantage** (§4.2) on the facility categories to flag BGs where these attractors
+    are locally *over-represented*, not merely present.
+
+### 3.8 Temporal availability (24/7 / overnight service)
+- **Theory:** RAT (guardianship collapses at night; extended exposure window), Opportunity.
+- **H8:** Stops with overnight / near-24/7 service carry a low-guardianship exposure window and are
+  more dangerous per unit of activity; BGs with more all-night stops show higher property and
+  robbery `logcount`. (True 24/7 is rare and mostly major rail, so prefer a **continuous span /
+  overnight-service** measure over a strict 24/7 flag.)
+- **Feature shapes (from GTFS `stop_times` × `calendar`/`calendar_dates`):**
+  - Stop-level **service span hours** = last departure − first departure on a representative day.
+  - Stop-level flag `overnight(s)` = 1 if any scheduled trips in ~00:00–05:00.
+  - Stop-level **days/week of service** (7 vs weekday-only).
+  - Count of **overnight trips** per stop (intensity, not just presence).
+  - BG aggregates: max/mean span across stops, count/share of overnight stops, Σ overnight trips.
+
 ## 4. "Fancier" feature definitions
 
 Adapted from Kadar & Pletikosa (2018), *Mining large-scale human mobility data for long-term
