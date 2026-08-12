@@ -2,7 +2,7 @@
 
 This document explains, in plain language and with the underlying math, how the
 severity/frequency-weighted crime scores are constructed in this repo
-(`compute_weighted_scores` in `src/core/geo_utils.py`). It also walks through a
+(`compute_weighted_scores` in `src/carrier_eval/scores.py`). It also walks through a
 real client example to show how the Overall score relates to the Violent and
 Property scores.
 
@@ -53,7 +53,7 @@ per-crime index values shown in the product (e.g., a "Homicide Crime Index" of
 ### National reference rates (`*_pt_u`, per 1,000)
 
 These are supplied pre-computed from the evals dataset (read via
-`extract_national_rates` in `src/eval_utils.py`), not derived in this repo:
+`extract_national_rates` in `src/carrier_eval/scores.py`), not derived in this repo:
 
 | Crime | National rate |
 |---|---|
@@ -183,7 +183,7 @@ moves it.
 | Concept | Column / symbol | Location |
 |---|---|---|
 | Local rate per 1K | `{crime}_rate` | `normalize_actuals` |
-| National rate $N_i$ | `{crime}_pt_u` | `extract_national_rates` (`eval_utils.py`) |
+| National rate $N_i$ | `{crime}_pt_u` | `extract_national_rates` (`carrier_eval/scores.py`) |
 | Relative risk $\text{rel}_i$ | `{crime}_rel` (intermediate) | `compute_weighted_scores` |
 | Overall composite (unitless) | `wtotal_rel` | `compute_weighted_scores` |
 | Property composite (unitless) | `wprop_rel` | `compute_weighted_scores` |

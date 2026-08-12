@@ -1,7 +1,9 @@
 import pandas as pd
-from core.config import GCS_ROOT, UCR_YEAR, INTERIM_DIR
-from prediction.config import FEATURE_SOURCES, source_parquet
-from prediction.sources import get_gcs_fs, read_sav_from_gcs, pull_source
+from crime_blockgroup_mapping.config import INTERIM_DIR
+from crime_blockgroup_mapping.constants import GCS_ROOT, UCR_YEAR
+from regression_modelling.config import source_parquet
+from regression_modelling.constants import FEATURE_SOURCES
+from regression_modelling.data_wrangling.sources import get_gcs_fs, read_sav_from_gcs, pull_source
 
 ACS_COLS = ["det_pct", "in_household_pct", "moved1yr_pct"]
 

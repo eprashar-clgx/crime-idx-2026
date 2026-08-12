@@ -1,142 +1,167 @@
-# Architecture — Crime Prediction Pipeline
+# Architecture — crime-idx-2026
 
-This document describes the data flow for the block-group crime **prediction**
-experiment: sourcing predictor features, joining them to city crime targets, and
-fitting regression models. Chicago and Houston (2025) are the initial samples.
+This repo supports the statistical tasks needed to build (and evaluate) a
+block-group crime-risk model. It is organized as **one module per task**, sharing a
+single foundation module. Chicago and Houston (2025) are the initial POC samples;
+four more cities follow.
 
-> **Status:** Some components are built, others are planned. Planned paths are
-> marked _(planned)_ below so a reader can tell the target design from what
-> currently exists.
+See `docs/CONTEXT.md` for the glossary and `docs/adr/0001-task-oriented-module-restructure.md`
+for the rationale behind this structure.
+
+> **Status:** Some paths are built, others planned. Planned paths are marked
+> _(planned)_ so a reader can tell the target design from what currently exists.
+
+## Module map
+
+```
+src/
+  crime_blockgroup_mapping/        # SHARED foundation (imported by both tasks)
+    config.py        # paths only
+    constants.py     # CityConfig + CITIES, crime-code maps, CRIME_CATEGORIES, BQ/GCS ids
+    boundaries.py    # city boundary + state block groups + within-city labelling
+    crime.py         # load crime, sjoin to BGs, map categories, aggregate to BG counts
+    rates.py         # population source, LODES jobs, per-1,000 rate normalization
+    plots.py         # general reusable map/plot helpers
+  regression_modelling/            # TASK: POC crime-risk model rebuild
+    config.py · constants.py       # PREDICTOR_COLS, TARGET_CATEGORIES, FEATURE_SOURCES
+    data_wrangling/                # BQ/GCS ingestion, feature assembly, feature-⋈-target join
+      sources.py · features.py · dataset.py · sql/{build,pull,explore}/
+    feature_engineering/           # winsorize, scale, log, spatial terms
+    distributions/                 # counts, distributions, corr, VIF; POI store-EDA (eda.py + plots.py)
+    models/                        # OLS, coefficient tables, Moran's I diagnostic
+    bias_testing/                  # predictor-vs-protected-attribute (e.g. race) checks
+    logging/                       # run / experiment logging
+  carrier_eval/                    # SIDE-QUEST: evaluate the existing model vs carrier data
+    config.py · constants.py
+    evals.py         # load/aggregate carrier evals + merge to BG crime
+    scores.py        # compute_weighted_scores, extract_national_rates
+notebooks/           # mirrors the module tree, outside src/
+data/                # raw -> interim -> processed; catalogued in data/README.md
+```
 
 ## Design principles
 
-- **Split ingestion from modeling.** Slow, networked pulls (BigQuery, GCS) are
-  cached to Parquet so iterative modeling reloads locally instead of re-querying.
-- **Registry-driven sources.** Atomic sources are declared as data in
-  `FEATURE_SOURCES` (`src/prediction/config.py`) and fetched by one generic
-  `pull_source`. Adding a source = one registry entry + one `.sql` file.
-- **Layered responsibilities.** `load_sql` (text) → `run_bq_pull` (DataFrame) →
-  `pull_source` (cache + dispatch). Each layer is independently usable/testable.
-- **One join key.** Everything is normalized to a 12-char `geoid` block-group key
-  before merging (GCS demographics arrive as `bg_key` and are renamed).
-- **Lifecycle-tiered data.** `data/raw` (immutable sources) → `data/interim`
-  (shared derived) → `data/processed` (experiment-specific model tables).
+- **One folder per statistical task.** Each module has a single goal; no ambiguous
+  names (`core`, `prediction`, `utils`).
+- **One shared foundation.** `crime_blockgroup_mapping` is the only module both tasks
+  import from — a single clean seam, no task-to-task dependency.
+- **`config.py` = paths only; `constants.py` per module.** Constants, dataclasses,
+  and registries never live in a global dumping ground.
+- **Split ingestion from modeling.** Slow BigQuery/GCS pulls cache to Parquet under
+  `data/interim`; modeling reloads locally (`refresh=False` unless a cache is stale).
+- **Registry-driven sources.** Predictors declared as data in `FEATURE_SOURCES`
+  (`regression_modelling/constants.py`), fetched by one generic `pull_source`.
+- **One join key.** Everything normalizes to a 12-char `geoid` before merging.
+- **Lifecycle-tiered data.** `data/raw` -> `data/interim` -> `data/processed`.
 
 ## Data flow
 
 ```mermaid
 flowchart TD
     subgraph SRC["External sources"]
-        BQ["BigQuery property tables<br/><i>defined in</i> src/prediction/sql/build/"]
+        BQ["BigQuery property tables<br/>regression_modelling/data_wrangling/sql/build/"]
         GCS["GCS .sav demographics<br/>gs://geospatial-projects/location_inc"]
         CITY["City crime CSVs 2025<br/>data/raw/city_crime/{city}/"]
+        NS["NeighborhoodScout .sav<br/>population + existing model scores"]
+        EV["Carrier evals parquet<br/>data/evals/"]
     end
 
-    subgraph INGEST["Ingestion"]
-        BUILD["run_bq_build — materialize tables<br/>src/prediction/sources.py"]
-        PULL["pull_source — dispatch + cache<br/>src/prediction/sources.py"]
-        DEMO["build_demographic_features<br/>src/prediction/features.py"]
-        GEO["sjoin crimes to block groups<br/>src/core/geo_utils.py"]
+    subgraph CBM["crime_blockgroup_mapping (shared)"]
+        GEO["boundaries + crime: sjoin crimes to block groups, aggregate"]
+        RATE["rates: population + LODES jobs -> per-1,000 rates"]
+        TGT["BG crime target<br/>data/interim/bg_crime/{city}.parquet"]
     end
 
-    subgraph REG["Cached artifacts"]
+    subgraph RM["regression_modelling (POC task)"]
+        BUILD["data_wrangling: run_bq_build -> pull_source (cache)"]
         SRCP["source pulls<br/>data/interim/sources/*.parquet"]
-        FEAT["national BG feature matrix<br/>data/interim/features/bg_predictors.parquet"]
-        TGT["crime target<br/>data/interim/bg_crime/{city}.parquet"]
+        FEAT["assemble_features: national BG matrix<br/>data/interim/features/bg_predictors.parquet"]
+        FE["feature_engineering: winsorize / scale / log / spatial"]
+        DS["dataset: features join target<br/>data/processed/regression_modelling/{city}_model_table.parquet"]
+        EDA["distributions: counts, corr, VIF, POI EDA"]
+        FIT["models: fit OLS + coef tables"]
+        DIAG["models: residuals + Moran's I"]
+        BIAS["bias_testing: predictor vs race"]
     end
 
-    subgraph MODEL["Modeling"]
-        DS["build_model_table — features ⋈ target<br/>src/prediction/dataset.py (planned)"]
-        MT["city model table<br/>data/processed/prediction/{city}_model_table.parquet (planned)"]
-        EDA1["EDA — distributions, corr, VIF<br/>notebooks/prediction/ (planned)"]
-        FIT["fit regression<br/>src/prediction/model.py (planned)"]
-        DIAG["diagnostics — residuals, coef, CV<br/>src/prediction/model.py + notebooks/prediction/ (planned)"]
+    subgraph CE["carrier_eval (side-quest)"]
+        EVAGG["evals: aggregate carrier data to BG"]
+        SCORE["scores: weighted scores + national rates"]
+        CMP["existing-model vs actuals comparison"]
     end
 
-    subgraph OUT["Persisted results"]
-        WTS["fitted weights<br/>outputs/prediction/models/*.pkl (planned)"]
-        COEF["coefficients + metrics<br/>outputs/prediction/ (planned)"]
-    end
-
-    BQ --> BUILD --> PULL --> SRCP
-    GCS --> DEMO --> SRCP
     CITY --> GEO --> TGT
-    SRCP --> FEAT
-    FEAT --> DS
+    NS --> RATE --> TGT
+    BQ --> BUILD --> SRCP --> FEAT
+    GCS --> FEAT
+    FEAT --> FE --> DS
     TGT --> DS
-    DS --> MT --> EDA1 --> FIT --> DIAG
-    FIT --> WTS
-    DIAG --> COEF
+    DS --> EDA --> FIT --> DIAG
+    FIT --> BIAS
+    TGT --> EVAGG
+    EV --> EVAGG --> CMP
+    NS --> CMP
+    SCORE --> CMP
 
-    EDA1 -. "revise features" .-> DEMO
+    EDA -. "revise features" .-> FE
     DIAG -. "add/drop predictors" .-> FEAT
     DIAG -. "respecify model" .-> FIT
-    WTS -. "reuse / score new city" .-> FIT
 ```
 
 ## Stage detail
 
-### 1. External sources
-- **BigQuery** — property-derived signals (e.g. `bg_vacancy`, `bg_clip_liens`)
-  built by `CREATE OR REPLACE TABLE` DDL in `src/prediction/sql/build/`. The heavy
-  aggregation runs once in BQ and persists as a staging table.
-- **GCS `.sav`** — national demographic layers (ACS, census division, distance to
-  city center, population rings) under
-  `gs://geospatial-projects/location_inc/demographic/`.
-- **City crime CSVs** — raw incident data for Chicago and Houston in
-  `data/raw/city_crime/{city}/`.
+### crime_blockgroup_mapping (shared)
+- **boundaries** — load the city polygon (Census places) and state block groups,
+  label block groups within the city by centroid.
+- **crime** — load raw incident CSVs, spatial-join to block groups, map city-specific
+  crime codes to the 7 primary categories, aggregate to BG-level counts (composites
+  exclude vandalism).
+- **rates** — obtain `population`, add LODES jobs (`c000`), normalize counts to
+  per-1,000 rates (incl. daytime-adjusted); zero-population BGs -> NaN, never inf.
+- **plots** — reusable map/plot helpers used by both tasks.
+- Output: `data/interim/bg_crime/{city}.parquet`, consumed by both tasks.
 
-### 2. Ingestion
-- `run_bq_build(name)` materializes a BQ feature table from `sql/build/{name}.sql`.
-  Runs rarely (only when upstream source data refreshes).
-- `pull_source(src)` reads the small result via `sql/pull/{name}.sql`, dispatching
-  on `src.backend` (`bq` or `gcs`), and caches to `data/interim/sources/{name}.parquet`.
-- `build_demographic_features()` assembles the multi-step GCS demographic bundle
-  (ACS + division + distance + population rings), normalizes `bg_key` → `geoid`,
-  and caches to `data/interim/sources/demographic.parquet`.
-- The **core geo pipeline** (`src/core/geo_utils.py`) spatially joins raw crime
-  incidents to block groups and aggregates counts, producing the target.
+### regression_modelling (POC task)
+- **data_wrangling** — owns all task SQL under `sql/{build,pull,explore}` (one `SQL_DIR`).
+  `run_bq_build(name)` materializes a BQ feature table from
+  `sql/build/{name}.sql`; `pull_source(src)` reads it via `sql/pull/{name}.sql`,
+  dispatches on backend, and caches to `data/interim/sources/{name}.parquet`.
+  `assemble_features()` joins the demographic spine to every registry source on
+  `geoid`; `dataset.build_model_table(city)` joins features to the target,
+  filters to inside-city BGs, imputes, and log-transforms.
+- **feature_engineering** — winsorizing, scaling, log transforms, and spatial terms
+  on raw predictors.
+- **distributions** — counts, distributions, correlations, VIF; POI store-EDA
+  (`eda.py`) with folium visualization (`plots.py`). Its explore SQL templates live
+  under `data_wrangling/sql/explore` (co-located with the `sources.load_sql` loader).
+- **models** — fit OLS / regularized / spatial regression, coefficient tables, and
+  diagnostics (HC3 SEs, residuals, **Moran's I**).
+- **bias_testing** — verify predictors correlate with crime and not with protected
+  attributes such as race.
+- **logging** — record run configuration and results across iterations.
 
-**Re-runs:** ingestion only executes when a cache is missing or `refresh=True`.
-
-### 3. Cached artifacts (`data/interim`)
-- `sources/*.parquet` — per-source pulls (the materialized "data registry").
-- `features/bg_predictors.parquet` — the national BG feature matrix produced by
-  `assemble_features()`, joining the demographic spine to every registry source
-  on `geoid`.
-- `bg_crime/{city}.parquet` — the BG-level crime target, computed once and reused
-  by both analysis and prediction.
-
-### 4. Modeling
-- `build_model_table(city)` _(planned, `src/prediction/dataset.py`)_ joins
-  `bg_predictors` to the city target on `geoid`, filters to inside-city block
-  groups, and writes `data/processed/prediction/{city}_model_table.parquet`.
-- **EDA** _(planned, `notebooks/prediction/`)_ — distributions, correlations,
-  multicollinearity (VIF) before fitting.
-- **Fit** _(planned, `src/prediction/model.py`)_ — OLS / regularized / spatial
-  regression of crime on the predictor set.
-- **Diagnostics** _(planned)_ — residual analysis, coefficient inspection, and
-  cross-validated metrics.
-
-### 5. Persisted results (`outputs/prediction`) _(planned)_
-- `models/*.pkl` — fitted weights, so a model can score a new city without refit.
-- Coefficient and metric tables for tracking model iterations.
+### carrier_eval (side-quest)
+- **evals** — load carrier evals parquet, aggregate claims/losses/exposure to BG,
+  merge with the shared BG crime target.
+- **scores** — `compute_weighted_scores` (equal-representation relative-risk average)
+  and `extract_national_rates` (`*_pt_u`); compare the existing model against actuals.
 
 ## Feedback loops
 
 The pipeline is iterative, not linear:
-
-- **EDA → features:** distribution/correlation findings drive adding, dropping, or
-  transforming predictors (loops back to feature assembly).
-- **Diagnostics → model spec:** residual and coefficient patterns drive respecifying
-  the model (loops back to fitting).
-- **Weights → new samples:** stored weights let you score an additional city or
-  time period without retraining.
+- **distributions -> feature_engineering:** distribution/correlation/VIF findings
+  drive adding, dropping, or transforming predictors.
+- **models -> features / spec:** residual and coefficient patterns drive respecifying
+  the model or the predictor set.
+- **models -> bias_testing:** fitted predictors are checked against protected
+  attributes before a spec is finalized.
 
 ## Configuration (cross-cutting)
 
-Configuration is not shown as a pipeline node because it feeds nearly every stage:
-
-- `src/core/config.py` — shared paths, data tiers, project IDs, `CITIES`.
-- `src/prediction/config.py` — prediction-only `SQL_DIR`, the `FeatureSource`
-  dataclass, and the `FEATURE_SOURCES` registry.
+Configuration feeds nearly every stage, so it is not a pipeline node:
+- Each module has a `config.py` (paths only) and a `constants.py` (constants,
+  dataclasses, registries).
+- `crime_blockgroup_mapping/constants.py` — `CityConfig`/`CITIES`, crime-code maps,
+  `CRIME_CATEGORIES`, BQ/GCS project ids (shared vocabulary).
+- `regression_modelling/constants.py` — `PREDICTOR_COLS`, `TARGET_CATEGORIES`, the
+  `FeatureSource` dataclass, and the `FEATURE_SOURCES` registry.

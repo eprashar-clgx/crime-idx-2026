@@ -1,14 +1,8 @@
+"""Ingest carrier insurance evals and aggregate them to block-group level."""
 import pandas as pd
-from pathlib import Path
-from src.core.config import DATA_DIR
 
-
-EVALS_PATH = DATA_DIR / "evals" / "evals.parquet"
-
-# Columns to aggregate at BG level
-CLAIMS_COLS = ['crime_claims']
-LOSSES_COLS = ['crime_loss']
-EXPOSURE_COL = 'earned_exposures'
+from carrier_eval.config import EVALS_PATH
+from carrier_eval.constants import CLAIMS_COLS, LOSSES_COLS, EXPOSURE_COL
 
 
 def load_evals(path=None):
@@ -41,7 +35,7 @@ def validate_block_cols(df):
 
 def aggregate_evals_to_bg(df, carrier):
     """Aggregate eval data to block group level for a specific carrier.
-    
+
     Filters to carrier + earned_exposures > 0, then groups by bg_geoid.
     Returns DataFrame with summed claims, losses, and exposure per BG.
     """
@@ -49,19 +43,19 @@ def aggregate_evals_to_bg(df, carrier):
     if len(carrier_df) == 0:
         print(f"No data for carrier '{carrier}' with exposure > 0")
         return pd.DataFrame()
-    
+
     agg_cols = [EXPOSURE_COL] + CLAIMS_COLS + LOSSES_COLS
     # Only include columns that exist
     agg_cols = [c for c in agg_cols if c in carrier_df.columns]
-    
+
     bg_agg = carrier_df.groupby('bg_geoid')[agg_cols].sum().reset_index()
-    
+
     # Add total claims column
     claims_present = [c for c in CLAIMS_COLS if c in bg_agg.columns]
     losses_present = [c for c in LOSSES_COLS if c in bg_agg.columns]
     bg_agg['total_claims'] = bg_agg[claims_present].sum(axis=1)
     bg_agg['total_losses'] = bg_agg[losses_present].sum(axis=1)
-    
+
     print(f"Carrier '{carrier}': {len(carrier_df):,} rows → {len(bg_agg):,} block groups")
     print(f"  Total exposure: {bg_agg[EXPOSURE_COL].sum():,.0f}")
     print(f"  Total claims: {bg_agg['total_claims'].sum():,.0f}")
@@ -71,28 +65,13 @@ def aggregate_evals_to_bg(df, carrier):
 
 def merge_evals_with_crime(eval_bg, comparison_df):
     """Inner join carrier BG data with city crime comparison data on geoid.
-    
+
     Brings crime counts and model scores from the city pipeline into the eval BG frame.
     """
     # comparison_df has 'geoid' column from our pipeline
     merged = eval_bg.merge(comparison_df, left_on='bg_geoid', right_on='geoid', how='inner')
-    
+
     n_eval = len(eval_bg)
     n_matched = len(merged)
     print(f"Merged: {n_matched:,} of {n_eval:,} eval BGs matched to city crime data ({n_matched/n_eval*100:.1f}%)")
     return merged
-
-def extract_national_rates(path=None):
-    """
-    Extract national crime rates (*_pt_u columns) from evals parquet
-    These are constant across all rows - take first non-null value for each
-    """
-    path = path or EVALS_PATH
-    df = pd.read_parquet(path, engine='fastparquet')
-    df.columns = df.columns.str.lower().str.replace(' ','_').str.replace('#','num')
-    pt_u_cols = [c for c in df.columns if c.endswith('_pt_u')]
-    # Since these values are repeated through the dataframe, we can just pick the first one 
-    # Saved as a dictionary for easy lookup using keys instead of relying on idx
-    national = df[pt_u_cols].dropna().iloc[0].round(3).to_dict()
-    print(f"National rates extracted: {national}")
-    return national

@@ -1,6 +1,8 @@
 # Repo specific folders
 /data
 /context
+/.agents
+/.github
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -209,3 +211,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# keep the data catalog tracked even though data/ is ignored
+!data/README.md

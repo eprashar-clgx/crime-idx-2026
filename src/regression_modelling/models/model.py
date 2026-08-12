@@ -15,7 +15,7 @@ from scipy import stats
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.stattools import jarque_bera
 
-from prediction.dataset import PREDICTOR_COLS
+from regression_modelling.constants import PREDICTOR_COLS
 
 
 # ------------------------------------------------------------------ core fit --
@@ -101,14 +101,16 @@ def spatial_moran(city: str, design_frame: pd.DataFrame, resid, k: int = 8):
     Significant positive I ⇒ residual clustering ⇒ plain OLS is missing spatial
     structure ⇒ escalate to a spatial lag / error model or add spatial features.
     """
-    from core.config import CITIES
-    from core import geo_utils as geo
+    from crime_blockgroup_mapping.constants import CITIES
+    from crime_blockgroup_mapping.boundaries import (
+        load_state_block_groups, label_bgs_within_city, load_city_boundary,
+    )
     from libpysal.weights import KNN
     from esda.moran import Moran
 
     cfg = CITIES[city]
-    bg = geo.load_state_block_groups(cfg)
-    bg = geo.label_bgs_within_city(bg, geo.load_city_boundary(cfg))
+    bg = load_state_block_groups(cfg)
+    bg = label_bgs_within_city(bg, load_city_boundary(cfg))
     bg = bg[bg["within_city"]][["geoid", "geometry"]].copy()
     bg["cx"] = bg.geometry.centroid.x
     bg["cy"] = bg.geometry.centroid.y

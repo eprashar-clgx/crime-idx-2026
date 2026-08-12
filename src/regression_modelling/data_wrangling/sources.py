@@ -4,11 +4,11 @@ import pyreadstat
 from gcsfs import GCSFileSystem
 from google.cloud import bigquery
 
-from core.config import (
+from crime_blockgroup_mapping.constants import (
     GCS_PROJECT, GCS_ROOT, UCR_YEAR,
     BQ_PROJECT, IDAP_PROJECT, BOUNDARY_DATASET, BQ_STAGING_DATASET,
 )
-from prediction.config import SQL_DIR, source_parquet
+from regression_modelling.config import SQL_DIR, source_parquet
 
 # --- GCS ---
 def get_gcs_fs() -> GCSFileSystem:
@@ -64,3 +64,12 @@ def pull_source(src, refresh: bool = False) -> pd.DataFrame:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path)
     return df
+
+
+def run_bq_explore(name: str, **params) -> pd.DataFrame:
+    """Run a parametrized exploratory query (sql/explore/{name}.sql) into a DataFrame.
+
+    `params` fill template placeholders (e.g. name_predicate, naics_predicate) on top
+    of the project/dataset defaults; unused extras are ignored by str.format.
+    """
+    return _bq_client().query(load_sql(name, "explore", **params)).to_dataframe()
