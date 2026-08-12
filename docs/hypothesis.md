@@ -213,6 +213,56 @@ $$
   concentration — not mere presence — is criminogenic. More informative than a raw count for
   rare-but-risky categories.
 
+### 4.3 Building interaction variables (H7 × H8, and combos generally)
+The clean way to combine "next to a risky facility" (H7) **and** "runs all night" (H8) is to
+**form the interaction at stop level, then aggregate to the BG** — because both conditions are
+properties of the *same physical stop*. Doing it the other way (multiplying two BG-level averages)
+destroys the pairing: a BG could score high on both because it has a liquor-adjacent daytime stop
+*and* a separate all-night stop elsewhere, which is not the mechanism H3 posits.
+
+**Route A — flag AND (recommended, most interpretable).** At stop $s$:
+
+$$
+\text{risky\_allnight}(s) = \text{near\_risky}(s) \times \text{overnight}(s) \in \{0,1\}
+$$
+
+then aggregate to BG $t$:
+
+- `n_risky_allnight_stops(t)` = Σ over stops in BG — ★ primary feature.
+- `share_risky_allnight(t)` = risky_allnight_stops / total_stops — controls for stop count.
+- density per km². Use the count with a stop-count offset if you want a "rate of risky stops".
+
+**Route B — continuous product (more power, more care).** Keep components continuous at stop level
+(e.g. inverse-distance facility exposure `fac(s)`, overnight-trip count `night(s)`), form the
+stop-level product `fac(s) × night(s)`, aggregate to BG, then z-standardize. Retains gradient
+information the binary AND throws away.
+
+**Statistical rules (this is an inferential OLS with HC3 SEs):**
+1. **Marginality / hierarchy:** always include **both main effects** (`near_risky`/`fac` *and*
+   `overnight`/`night`, aggregated to BG) alongside the product. Never enter a product alone.
+2. **Center before multiplying.** Mean-center (or z-score) each *component* first, then form the
+   product; otherwise the interaction is heavily collinear with its main effects and the main-effect
+   coefficients become uninterpretable. Your pipeline z-standardizes at fit — center the components
+   *before* building the product, then let the pipeline standardize all three terms.
+3. **Check collinearity:** report VIF for the two mains + product; the product row will be higher by
+   construction — that's expected, but flag if a main effect's VIF explodes.
+4. **Interpret at the margin:** with centered inputs, each main effect is the effect at the other
+   variable's mean; the product is the *extra* risk when a stop is both facility-adjacent and
+   all-night — the H3 quantity of interest.
+5. **Re-check Moran's I** after adding interactions (they can absorb or reveal spatial structure).
+
+**Generalizes to the other combos in this doc:** the same stop-level-flag-then-aggregate recipe
+builds `stop_density × venue_diversity` (§3.6), `service_intensity × guardianship`, and
+`transit × city-transit-share` (guardrail 3). For city-share, the moderator is a BG/city constant,
+so that one is a straightforward BG-level product (still center first).
+
+**Offense-specific expectation for H7/H8/H3:** effects should concentrate in **robbery, larceny,
+MVT** (cash + low guardianship = property/opportunity), be **strongest for the interaction** (H3),
+and be weak or null for the pure night-service main effect on violent crime (violence tends to occur
+in *emptier* settings — guardrail 6). If the interaction is significant while both mains are weak,
+that is direct support for H3.
+
+
 > **Adaptation note:** Kadar & Pletikosa compute these over Foursquare venue categories with
 > checkins/subway/taxi as ambient-population signals. We substitute (a) POI/land-use categories
 > we can source nationally and (b) GTFS route-types for the transit variant. Their checkin/taxi
@@ -234,6 +284,9 @@ $$
 | 6 | Attractor offering advantage | location quotient (bars/ATMs) | main | 6 |
 | 7 | Transit × guardianship | `stop_density × activity_density` | interaction | 2, 6 |
 | 8 | Transit × city-transit-share | interaction | interaction | 3 |
+| 9 | Risky-facility co-location | risky-stop count / share (stop-level flag → BG) | main | 1, 6 |
+| 10 | Overnight/24-7 service | span hrs, overnight-stop count/share | main + offset | 1, 5 |
+| 11 | Risky-facility × overnight (**H3**) | stop-level AND → BG count; centered product | interaction (+ both mains) | 6 |
 
 Validate every transit coefficient against the `*_rate` validators and re-check Moran's I;
 expect the strongest, most stable effects on `larceny`/`mvt`, weakest on violent categories.
