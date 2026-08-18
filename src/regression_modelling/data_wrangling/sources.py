@@ -46,6 +46,18 @@ def run_bq_build(name: str) -> None:
     """Materialize a feature table in BQ (runs the CREATE OR REPLACE DDL)."""
     _bq_client().query(load_sql(name, "build")).result()
 
+
+def run_bq_build_store(store: str) -> None:
+    """Materialize a store block-group count table via the generic stores.sql template.
+
+    Renders sql/build/stores.sql with the store's stem + firmographics match predicate
+    from STORE_DEFS (regression_modelling.constants). NOTE: firmographics live in a prd
+    project; this must be run where those tables are reachable.
+    """
+    from regression_modelling.constants import STORE_DEFS
+    sql = load_sql("stores", "build", store=store, match_predicate=STORE_DEFS[store])
+    _bq_client().query(sql).result()
+
 def run_bq_pull(name: str) -> pd.DataFrame:
     """Pull a materialized feature table into a DataFrame."""
     return _bq_client().query(load_sql(name, "pull")).to_dataframe()

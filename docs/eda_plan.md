@@ -25,7 +25,7 @@ Phases run in dependency order; phases 1-3 loop per variable.
 
 | Variable | Bucket | Hypothesis (relationship to crime) | Stage | Decision | Notes |
 |----------|--------|------------------------------------|-------|----------|-------|
-| convenience_stores | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Existing `seven_eleven` source is a 7-Eleven-only proxy; convenience stores are broader. User has EDA SQL to templatize. |
+| convenience_stores | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Broad dual-vintage NAICS (`445131`/`445120` convenience + `457110`/`447110` gas-w-mart) via generic `stores.sql`; replaces the old 7-Eleven-only `seven_eleven` proxy. |
 | liquor_stores | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Existing `liquor_stores` source (`business_name/brand LIKE %liquor%`). |
 | gas_stations | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Existing `gas_stations` source (`business_name LIKE %gas station%`). |
 | transit_stations | feasibility_unknown | Presence invites/attracts criminal activity | feasibility | — | Source unclear — BQ firmographics vs external GTFS/OSM? Check BG coverage + `geoid` joinability. |

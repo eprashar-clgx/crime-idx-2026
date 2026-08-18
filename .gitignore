@@ -214,3 +214,8 @@ __marimo__/
 
 # keep the data catalog tracked even though data/ is ignored
 !data/README.md
+
+# SQL build templates are versioned source, not Python build artifacts (unignore the
+# generic `build/` rule above for this specific dir).
+!src/regression_modelling/data_wrangling/sql/build/
+!src/regression_modelling/data_wrangling/sql/build/*.sql

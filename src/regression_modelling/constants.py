@@ -33,26 +33,51 @@ FEATURE_SOURCES = {
         key_col="geoid",
         feature_cols=("clip_foreclosure_pct",),
     ),
-    "seven_eleven": FeatureSource(
-        name="seven_eleven",
+    "convenience_stores": FeatureSource(
+        name="convenience_stores",
         backend="bq",
-        location="seven_eleven",      # → sql/pull/seven_eleven.sql
+        location="convenience_stores",  # → sql/pull/convenience_stores.sql
         key_col="geoid",
-        feature_cols=("unq_seven_eleven_clips",),
+        feature_cols=("unq_convenience_stores_clips",),
     ),
     "gas_stations": FeatureSource(
         name="gas_stations",
         backend="bq",
         location="gas_stations",      # → sql/pull/gas_stations.sql
         key_col="geoid",
-        feature_cols=("unq_gas_station_clips",),
+        feature_cols=("unq_gas_stations_clips",),
     ),
     "liquor_stores": FeatureSource(
         name="liquor_stores",
         backend="bq",
         location="liquor_stores",     # → sql/pull/liquor_stores.sql
         key_col="geoid",
-        feature_cols=("unq_liquor_store_clips",),
+        feature_cols=("unq_liquor_stores_clips",),
+    ),
+}
+
+# Store universes for the generic block-group builder (sql/build/stores.sql).
+# {store} = table/column stem (bg_{store}, unq_{store}_clips); value = firmographics
+# match predicate (NAICS/SIC codes and/or business-name LIKEs).
+# NAICS codes are dual-vintage: subsector 447 (Gasoline Stations, 2017) was renumbered
+# to 457 in NAICS 2022, and 445120 (Convenience Stores, 2017) became 445131 (Convenience
+# Retailers, 2022). The firmographics view mixes vintages, so each concept lists both.
+# Split is non-overlapping: gas-with-mart -> convenience (attractor); fuel-only -> gas.
+STORE_DEFS = {
+    "convenience_stores": (
+        # convenience stores (445131=2022, 445120=2017) + gas w/ convenience mart (457110=2022, 447110=2017)
+        "naics_6_digit_primary_code IN ('445131','445120','457110','447110')"
+    ),
+    "gas_stations": (
+        # fuel-only stations (457120=2022, 447190=2017); mart stations counted under convenience
+        "naics_6_digit_primary_code IN ('457120','447190')\n"
+        "     AND NOT LOWER(business_name) LIKE '%charging station%'"
+    ),
+    "liquor_stores": (
+        # beer/wine/liquor retailers, 4453x covers 445310 (2017) & 445320 (2022)
+        "naics_6_digit_primary_code LIKE '4453%'\n"
+        "     AND (LOWER(business_brand_name) LIKE '%liquor%'"
+        " OR LOWER(business_name) LIKE '%liquor%')"
     ),
 }
 
@@ -74,17 +99,17 @@ PREDICTOR_COLS = [
     "vacant_pct",
     "clip_liens_pct",
     "clip_foreclosure_pct",
-    "unq_seven_eleven_clips",
-    "unq_gas_station_clips",
-    "unq_liquor_store_clips",
+    "unq_convenience_stores_clips",
+    "unq_gas_stations_clips",
+    "unq_liquor_stores_clips",
 ]
 
 ZERO_FILL = [
     "vacant_pct",
     "clip_liens_pct",
     "clip_foreclosure_pct",
-    "unq_seven_eleven_clips",
-    "unq_gas_station_clips",
-    "unq_liquor_store_clips",
+    "unq_convenience_stores_clips",
+    "unq_gas_stations_clips",
+    "unq_liquor_stores_clips",
 ]                                                       # 0 = none observed
 MEDIAN_FILL = ["city_centers_dist", "pop_est_5mile", "pop_ch_1mile"]  # 0 would be wrong
