@@ -30,7 +30,7 @@ Kadar & Pletikosa 2018 (ambient features beat census baseline; larceny gains mos
 
 **Guardrails carried from `hypothesis.md`:** (1) count-vs-per-person confound → also test `*_rate`
 + population/jobs offset; (2) non-monotonic at BG scale → allow non-linear form; (3) city
-heterogeneity → interact with city / transit-share (Chicago is high-transit; Atlanta, Sacramento,
+heterogeneity → interact with city / transit-share (Chicago is high-transit; Houston, Atlanta,
 Pittsburgh auto-oriented); (4) prefer GTFS **supply** over endogenous ridership; (5) opportunity ≠
 volume → crowding proxy over mean flow; (6) offense specificity → property/theft, not violent.
 
@@ -90,8 +90,49 @@ gtfs-kit for built-in stop stats; fall back to partridge on performance limits.
 
 **Feed acquisition:** pull **stable archived** zips from the **Mobility Database** (API +
 versioned history) so each city pins to a 2025 feed — not agency "latest" URLs that get overwritten.
-Cities → agencies: Chicago = CTA (+Metra/Pace optional); Atlanta = MARTA; Pittsburgh = PRT;
-Sacramento = SacRT; SF = SFMTA/Muni + BART (consider 511 SF Bay regional feed).
+Cities → agencies: Chicago = CTA (+Metra/Pace optional); Houston = METRO; Atlanta = MARTA;
+Pittsburgh = PRT; SF = SFMTA/Muni + BART (consider 511 SF Bay regional feed).
+
+> **One snapshot, not the whole year.** GTFS has no "whole-year" feed — each zip is a snapshot valid
+> only for its service date range. Transit *supply* (stop locations, spans, overnight service) is
+> highly stable quarter to quarter, so for an annual, cross-sectional 2025 model we pull **one
+> representative mid-2025 snapshot per city** (e.g. the feed active in June 2025), temporally aligned
+> across all five cities, and record each `feed_version` for reproducibility. Only go multi-feed if we
+> later model within-year change (e.g. a new rail line opening); in that case derive per-stop features
+> per feed and take the **median across feeds** as the annual value, rather than concatenating raw stops.
+
+### 3.1 Demand-side data — what exists, and why real-time is overkill here
+
+Standard GTFS is **supply only**: stops, routes, trips, and scheduled times. It contains **no
+passenger counts, no boardings, and no occupancy**. Ridership and real-time data live in separate
+feeds. Here's the landscape and why we deliberately stay on the static side:
+
+- **GTFS Realtime** — live vehicle positions, delays, and service alerts, refreshed every few
+  seconds. It can carry an occupancy label, but only if the agency bothers to fill it in, and many
+  don't. It is a live stream with no history, so it cannot be pulled retroactively for 2025.
+- **GTFS-Ride** — an open standard built specifically for ridership, but almost no agency publishes
+  it. Likely a dead end for our five cities.
+- **APC / AFC (passenger counters and fare-card taps)** — the true ridership sources, and what the
+  crowding research actually used. Usually not public, and access is a per-agency data request.
+- **National Transit Database (NTD)** — public and does cover 2025, but only at the agency and route
+  level, not stop or block group. Too coarse to be a block-group feature. We use it only as a
+  **city-level moderator** for how transit-dependent each city is (Chicago high; Houston, Atlanta,
+  Pittsburgh lower).
+
+**Why real-time is overkill for this project:**
+
+- Our crime target is **annual and cross-sectional** for 2025. Real-time feeds describe second-by-
+  second conditions we would then have to average away back into a yearly number.
+- Real-time data has **no 2025 history** to pull — we'd have to have been collecting it live all year.
+- Ridership is **endogenous**: crime lowers ridership, so using it as a predictor muddies cause and
+  effect. Stable **supply** features are the cleaner choice for an inferential model.
+- We can **approximate demand from supply** we already plan to use: service intensity (trips per day),
+  overnight span, and seat-capacity weighting (rail counts for more than bus) as a static stand-in for
+  crowding pressure.
+
+**Honest limitation to record:** static GTFS cannot measure *realized* crowding, so the crowding
+channel behind H3 is approximated, not observed. If APC or fare-card data ever becomes available for a
+city, revisit that channel then.
 
 ---
 
@@ -127,17 +168,32 @@ interaction is significant while both mains are weak.
 
 ## 6. Execution checklist (next steps → maps to `eda_plan.md` phases)
 
-1. **Feasibility (Phase 2):** confirm Mobility Database has 2025-vintage feeds for all five cities;
-   verify stop `geoid` join coverage; confirm POI layer (7-11 / liquor / ATM) is already in hand.
-2. **Prototype ingestion:** one city (Chicago/CTA) — gtfs-kit → per-stop `stats` + geometry;
-   apply the four gotchas; `sjoin` to `geoid`; print matched/unmatched stop counts.
-3. **Stop-level features:** derive `span_hours`, `overnight_flag`, `near_risky` (POI co-location),
-   and the H3 AND flag at stop level.
-4. **Aggregate to BG** and cache to `data/interim/sources/transit_<city>.parquet` (`refresh: bool`
-   pattern); reproject to `EPSG:4326` for joins.
-5. **Distribution EDA (Phase 1):** null rate, cardinality, ranges, distributions per feature;
-   decide keep/transform/drop.
-6. **Registry + regression (Phase 3):** add `FeatureSource` (local-file backend, not BQ/GCS) to
-   `FEATURE_SOURCES`; add validated features to `PREDICTOR_COLS` (+ `ZERO_FILL`/`MEDIAN_FILL`);
-   rebuild model table; fit with both-mains-plus-interaction; check sig, VIF, residuals, Moran's I;
+Status legend: [x] done · [~] partial / credential-gated · [ ] to do.
+
+1. [x] **Feasibility (Phase 2):** 2025 feeds downloaded for all five cities (Mobility
+   Database, keyed by stable `mdb_id` in `TRANSIT_FEEDS`); stop→`geoid` join coverage
+   confirmed (Chicago 9,935/10,792; Houston 7,972/8,918; SF 3,155/3,212; etc. — the
+   remainder are suburban stops outside city limits). POI co-location layer is BQ-gated
+   (see step 3).
+2. [x] **Prototype ingestion:** implemented for all five cities in
+   `transit/feeds.py` (`read_stop_features` / `load_city_stops`) via gtfs-kit
+   `compute_stop_stats` + per-stop geometry; the four gotchas applied; `sjoin` to `geoid`
+   in `transit/build.py` with matched/unmatched diagnostics. A **service-density-aware
+   date picker** selects a peak-service weekday nearest the target anchor (avoids
+   near-empty special-service dates — MARTA's real service is confined to a narrow window).
+3. [~] **Stop-level features:** `span_hours`, `overnight_flag`, route-mode set done in
+   `feeds.py`; `near_risky` co-location + H3 `risky_allnight` implemented in
+   `colocation.py` (`add_risky_flags`) but the POI point layer (7-11 / liquor / ATM) is
+   pulled from the firmographics CLIP source in BigQuery (`build.load_risky_facilities`)
+   — needs credentials, so H1/H3 columns are currently emitted as 0 offline.
+4. [x] **Aggregate to BG** and cache: `build_all_transit()` writes
+   `data/interim/sources/transit.parquet` (registry cache; `refresh: bool` pattern),
+   with per-stop intermediates at `data/interim/transit/stops/{city}.parquet`. All joins
+   in `EPSG:4326`; area/centroid via equal-area `EPSG:5070`.
+5. [ ] **Distribution EDA (Phase 1):** null rate, cardinality, ranges, distributions per
+   feature; decide keep/transform/drop. (Re-run once BQ POI points populate H1/H3.)
+6. [~] **Registry + regression (Phase 3):** `transit` `FeatureSource` (`backend="file"`)
+   is wired into `FEATURE_SOURCES` and read by `assemble_features`. Still to do: add
+   EDA-validated features to `PREDICTOR_COLS` (+ `ZERO_FILL`/`MEDIAN_FILL`); rebuild model
+   table; fit with both-mains-plus-interaction; check sig, VIF, residuals, Moran's I;
    validate transit coefficients against `*_rate`; test city-heterogeneity interaction.

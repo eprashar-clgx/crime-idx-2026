@@ -61,6 +61,11 @@ def assemble_features(year: int = UCR_YEAR, refresh: bool = False) -> pd.DataFra
     """National BG feature matrix: demographic spine ⋈ all registry sources, keyed by geoid."""
     feats = build_demographic_features(year, refresh=refresh)      # spine (~242k BGs)
     for src in FEATURE_SOURCES.values():                            # vacancy, liens, ...
+        # file-backed sources (e.g. transit) are materialized out-of-band; skip until built
+        # so the pipeline keeps working before the artifact exists.
+        if src.backend == "file" and not source_parquet(src.name).exists():
+            print(f"skipping file-backed source '{src.name}' (not built yet)")
+            continue
         df = pull_source(src, refresh=refresh).rename(columns={src.key_col: "geoid"})
         feats = feats.merge(df[["geoid", *src.feature_cols]], on="geoid", how="left")
     out = INTERIM_DIR / "features" / "bg_predictors.parquet"

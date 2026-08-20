@@ -5,10 +5,43 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class FeatureSource:
     name: str                       # 'vacancy' → cache file name
-    backend: str                    # 'bq' or 'gcs'
-    location: str                   # BQ: pull-sql name | GCS: path template
+    backend: str                    # 'bq', 'gcs', or 'file' (materialized out-of-band)
+    location: str                   # BQ: pull-sql name | GCS: path template | file: builder note
     key_col: str = "geoid"          # join key in the pulled data
     feature_cols: tuple = ()        # predictor columns to keep
+
+
+@dataclass(frozen=True)
+class TransitFeed:
+    """One GTFS feed for a city (a city may have several, e.g. SF = Muni + BART).
+
+    Feeds are identified by their stable Mobility Database file stem (`feed_id`, e.g.
+    ``mdb-389`` or ``tld-764``); the downloaded zip is resolved by glob
+    (``{feed_id}-*.zip``) so re-downloading a fresher snapshot of the same feed does not
+    break paths.
+    """
+    agency: str                     # short label, e.g. 'cta', 'bart'
+    feed_id: str                    # Mobility Database file stem; zip = {feed_id}-*.zip
+
+
+# Per-city GTFS feeds, keyed by the same keys as CITIES (crime_blockgroup_mapping).
+# One representative mid-2025 snapshot per feed (record feed_version on download).
+# SF unions Muni + BART; shared stations are deduped by proximity in feeds.load_city_stops.
+TRANSIT_FEEDS = {
+    "chicago":       (TransitFeed("cta",   "mdb-389"),),
+    "houston":       (TransitFeed("metro", "mdb-2060"),),
+    "atlanta":       (TransitFeed("marta", "mdb-368"),),
+    "san_francisco": (TransitFeed("muni",  "mdb-2886"), TransitFeed("bart", "mdb-53")),
+    "pittsburgh":    (TransitFeed("prt",   "mdb-409"),),
+    # Secondary (property-only crime) cities — transit supply features still valid.
+    "jacksonville":  (TransitFeed("jta",   "tld-764"),),
+    "kansas_city":   (TransitFeed("kcata", "mdb-187"),),
+    "sacramento":    (TransitFeed("sacrt", "mdb-2137"),),
+}
+
+# Representative service date to pin trips/day and service span (a typical Wednesday,
+# feed active ~June 2025). Overnight window lives in transit.feeds.
+TRANSIT_REPRESENTATIVE_DATE = "2025-06-04"
 
 
 FEATURE_SOURCES = {
@@ -53,6 +86,27 @@ FEATURE_SOURCES = {
         location="liquor_stores",     # → sql/pull/liquor_stores.sql
         key_col="geoid",
         feature_cols=("unq_liquor_stores_clips",),
+    ),
+    # Transit is materialized out-of-band by transit.build.build_all_transit (backend="file").
+    # Covers the 5 POC cities only; null elsewhere on the national spine. feature_cols are the
+    # candidate BG predictors (docs/transit_eda_plan.md §5); promote to PREDICTOR_COLS after EDA.
+    "transit": FeatureSource(
+        name="transit",
+        backend="file",
+        location="build via regression_modelling.data_wrangling.transit.build_all_transit",
+        key_col="geoid",
+        feature_cols=(
+            "transit_stop_count",
+            "transit_stop_density",
+            "transit_nearest_stop_m",
+            "transit_service_intensity",
+            "transit_overnight_stop_count",
+            "transit_overnight_stop_share",
+            "transit_risky_stop_count",
+            "transit_risky_stop_share",
+            "transit_risky_allnight_count",
+            "transit_route_mode_diversity",
+        ),
     ),
 }
 

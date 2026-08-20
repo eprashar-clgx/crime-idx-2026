@@ -65,6 +65,15 @@ def run_bq_pull(name: str) -> pd.DataFrame:
 # --- generic source dispatch (registry-driven) ---
 def pull_source(src, refresh: bool = False) -> pd.DataFrame:
     path = source_parquet(src.name)
+    # file-backed sources are materialized out-of-band by a dedicated builder (e.g. the
+    # transit submodule); pull_source only reads the cached artifact — nothing to re-fetch.
+    if src.backend == "file":
+        if not path.exists():
+            raise FileNotFoundError(
+                f"file-backed source '{src.name}' not found at {path}; build it first "
+                f"({src.location})."
+            )
+        return pd.read_parquet(path)
     if path.exists() and not refresh:
         return pd.read_parquet(path)
     if src.backend == "bq":

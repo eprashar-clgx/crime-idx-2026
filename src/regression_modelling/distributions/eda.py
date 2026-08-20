@@ -45,6 +45,12 @@ STORE_QUERIES = {
         name="gas_stations",
         name_patterns=("%gas station%",),
     ),
+    # Provisional (H1 risky co-location): firmographics ATM coverage is uneven, so this
+    # is name-only and validated in EDA before promotion. Skipped gracefully if empty.
+    "atm": StoreQuery(
+        name="atm",
+        name_patterns=("%atm%", "%automated teller%"),
+    ),
 }
 
 
