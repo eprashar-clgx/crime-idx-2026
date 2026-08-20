@@ -6,10 +6,24 @@ from crime_blockgroup_mapping.config import DATA_DIR
 from crime_blockgroup_mapping.constants import CityConfig
 
 
-def load_crime_data(cfg: CityConfig, csv_path: str = None) -> gpd.GeoDataFrame:
-    """Load crime CSV, drop missing coords, return GeoDataFrame."""
+_USE_CONFIG = object()
+
+
+def load_crime_data(cfg: CityConfig, csv_path: str = None, year_filter=_USE_CONFIG) -> gpd.GeoDataFrame:
+    """Load crime CSV/XLSX, apply the year filter, drop missing coords, return a GeoDataFrame.
+
+    Geometry is built from ``cfg.wkt_col`` (a single ``POINT (lon lat)`` column) when set,
+    otherwise from ``cfg.lon_col``/``cfg.lat_col``; coords are read in ``cfg.crs`` and
+    reprojected to EPSG:4326. Sources with one row per person-involvement set
+    ``cfg.dedup_keys`` to collapse to one row per offense (keeping coord-bearing rows).
+    ``year_filter`` defaults to ``cfg.year_filter`` (a ``(start, end)`` pair kept as
+    ``start <= date < end``); pass ``None`` to disable or a ``(start, end)`` pair to override.
+    """
     path = DATA_DIR / (csv_path or cfg.crime_csv)
-    df = pd.read_csv(path, on_bad_lines='skip', engine='python')
+    if path.suffix.lower() in ('.xlsx', '.xls'):
+        df = pd.read_excel(path, dtype=str)
+    else:
+        df = pd.read_csv(path, on_bad_lines='skip', engine='python')
     df.columns = df.columns.str.lower().str.replace(' ', '_')
     # Normalize variations like 'maplatitude' → 'map_latitude'
     df = df.rename(columns={
@@ -25,13 +39,56 @@ def load_crime_data(cfg: CityConfig, csv_path: str = None) -> gpd.GeoDataFrame:
         'streettype': 'street_type',
         'zipcode': 'zip_code'
         })
-    valid = df.dropna(subset=[cfg.lat_col, cfg.lon_col])
-    gdf = gpd.GeoDataFrame(
-        valid,
-        geometry=gpd.points_from_xy(valid[cfg.lon_col], valid[cfg.lat_col]),
-        crs="EPSG:4326",
-    )
-    print(f"{cfg.name} crime data: {len(gdf):,} rows with valid coords (of {len(df):,})")
+    n_raw = len(df)
+
+    # Restrict to the target year window on the city's date column.
+    yf = cfg.year_filter if year_filter is _USE_CONFIG else year_filter
+    if yf and cfg.date_col:
+        if cfg.date_col not in df.columns:
+            raise KeyError(f"{cfg.name}: date_col '{cfg.date_col}' not found in {list(df.columns)}")
+        start, end = pd.Timestamp(yf[0]), pd.Timestamp(yf[1])
+        dt = pd.to_datetime(df[cfg.date_col], errors='coerce')
+        # Some sources (e.g. Detroit) store tz-aware timestamps; drop tz for naive comparison.
+        if getattr(dt.dtype, 'tz', None) is not None:
+            dt = dt.dt.tz_localize(None)
+        n_bad = dt.isna().sum()
+        df = df[(dt >= start) & (dt < end)]
+        print(f"{cfg.name} year_filter [{yf[0]}, {yf[1]}): kept {len(df):,} of {n_raw:,} "
+              f"rows ({n_bad:,} unparseable dates dropped)")
+
+    # Build geometry from either a single WKT column or separate lon/lat columns.
+    # Nulls are kept for now so dedup can prefer coord-bearing rows.
+    if cfg.wkt_col:
+        if cfg.wkt_col not in df.columns:
+            raise KeyError(f"{cfg.name}: wkt_col '{cfg.wkt_col}' not found in {list(df.columns)}")
+        raw = df[cfg.wkt_col].astype('string').str.strip()
+        geom = gpd.GeoSeries.from_wkt(raw.where(raw.ne(''), None), crs=cfg.crs)
+    else:
+        for col in (cfg.lat_col, cfg.lon_col):
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        pts = gpd.points_from_xy(df[cfg.lon_col], df[cfg.lat_col])
+        geom = gpd.GeoSeries(pts, index=df.index, crs=cfg.crs)
+        geom = geom.where(df[cfg.lat_col].notna() & df[cfg.lon_col].notna())
+    gdf = gpd.GeoDataFrame(df, geometry=geom.values, crs=cfg.crs)
+
+    # Some sources (e.g. Kansas City) carry one row per person-involvement; collapse to one
+    # row per offense, preferring the row that carries coordinates.
+    if cfg.dedup_keys:
+        n_before = len(gdf)
+        has_geom = gdf.geometry.notna() & (~gdf.geometry.is_empty).fillna(False)
+        gdf = (gdf.assign(_has_geom=has_geom)
+                  .sort_values('_has_geom', ascending=False, kind='stable')
+                  .drop_duplicates(list(cfg.dedup_keys), keep='first')
+                  .drop(columns='_has_geom'))
+        print(f"{cfg.name} dedup on {cfg.dedup_keys}: kept {len(gdf):,} of {n_before:,} rows")
+
+    # Drop rows without usable coordinates.
+    n_pre_coord = len(gdf)
+    gdf = gdf[gdf.geometry.notna() & (~gdf.geometry.is_empty).fillna(False)]
+    if str(cfg.crs).upper() != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+    denom = n_pre_coord if cfg.dedup_keys else (len(df) if (yf and cfg.date_col) else n_raw)
+    print(f"{cfg.name} crime data: {len(gdf):,} rows with valid coords (of {denom:,})")
     return gdf
 
 
