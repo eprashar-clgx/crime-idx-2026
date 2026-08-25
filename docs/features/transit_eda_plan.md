@@ -3,7 +3,8 @@
 Plan for adding **transit** predictors to the block-group (BG) crime model. Scopes the
 hypotheses, their theory roots, and exactly what to pull from GTFS and how — so execution
 can start from a fixed target. Companion to `docs/hypothesis.md` (full theory mapping) and
-`docs/eda_plan.md` (pipeline phases). **Planning only — no code until this is signed off.**
+`docs/eda_plan.md` (pipeline phases). The ingestion module is built and cached; see
+**Where We Are Right Now** and **Execution status** below for current state.
 
 > **Design constraint:** no demographic predictors (race, sex, age, income-as-group).
 > Transit features are justified by *environmental/situational* theory only — Routine Activity,
@@ -14,7 +15,118 @@ can start from a fixed target. Companion to `docs/hypothesis.md` (full theory ma
 
 ---
 
+## Where We Are Right Now: Feature Evaluation
+
+Ten BG-level transit features are built and cached (`data/interim/sources/transit.parquet`),
+grouped by the hypothesis each one tests. Theory roots are environmental only — Routine
+Activity Theory (RAT), Risk Terrain Modeling (RTM), Crime Pattern Theory. No demographics.
+
+**Supply / context (control + baseline exposure).** Not a single hypothesis — these quantify
+how much transit a BG has, so H1–H3 effects can be measured *net of* sheer transit presence
+(and to test the BG-scale U-shape).
+
+| Feature | What it is | Why |
+|---------|-----------|-----|
+| `transit_stop_count` | # boardable stops in the BG | Base transit exposure; the density confound control. |
+| `transit_stop_density` | stops per km² (equal-area) | Normalizes count by BG size — the real "how transit-saturated" measure. |
+| `transit_nearest_stop_m` | distance from BG centroid to nearest stop | Proximity gradient; lets stopless BGs still carry a signal (distance-decay). |
+| `transit_service_intensity` | sum of trips/day across the BG's stops | Activity/throughput proxy — more service = more ambient people converging (RAT). |
+| `transit_route_mode_diversity` | Shannon equitability over `route_type` (bus/rail/streetcar) | Multi-modal interchange = convergence node (Crime Pattern "nodes"); SF scores highest. |
+
+**H2 — Overnight / low-guardianship window (RAT).** Stops running overnight (~00:00–05:00)
+have collapsed guardianship → higher property + robbery.
+
+| Feature | What it is |
+|---------|-----------|
+| `transit_overnight_stop_count` | # stops with any overnight service |
+| `transit_overnight_stop_share` | fraction of the BG's stops that run overnight |
+
+**H1 — Risky-facility co-location (RTM "risky facilities").** Stops within ~150m of a
+convenience store / liquor outlet / ATM are riskier (cash + alcohol disinhibition), net of
+stop density.
+
+| Feature | What it is |
+|---------|-----------|
+| `transit_risky_stop_count` | # stops near a risky facility |
+| `transit_risky_stop_share` | fraction of the BG's stops that are facility-adjacent |
+
+**H3 — Interaction (RAT convergence in space *and* time).** A stop that is *both*
+facility-adjacent *and* all-night is disproportionately criminogenic — beyond either main
+effect alone.
+
+| Feature | What it is |
+|---------|-----------|
+| `transit_risky_allnight_count` | # stops that are *both* near a risky facility *and* overnight |
+
+**Key design note:** H3 is built at the **stop level first** (a single stop flagged as
+risky-AND-overnight), then counted per BG — not by multiplying two BG averages, which would
+falsely fire when a BG has a daytime-risky stop and a *separate* all-night stop.
+
+⚠️ The H1/H3 columns (`transit_risky_*`) are currently **zeros** — they need the BigQuery POI
+point pull (see In-Progress below). Supply + H2 features are fully populated. Expected offense
+concentration for all three hypotheses: **robbery, larceny, MVT** (property/theft, not violent).
+
+---
+
+## Execution status
+
+Maps to `eda_plan.md` phases. Detail on gotchas and code locations follows in sections 1–5.
+
+### Done
+
+- **Feeds downloaded (Phase 2):** 2025 feeds for all eight cities from the Mobility Database,
+  keyed by stable `feed_id` in `TRANSIT_FEEDS`. Stop→`geoid` join coverage confirmed (Chicago
+  9,935/10,792; Houston 7,972/8,918; SF 3,155/3,212; etc. — remainder are suburban stops
+  outside city limits).
+- **Prototype ingestion:** implemented for all cities in `transit/feeds.py`
+  (`read_stop_features` / `load_city_stops`) via gtfs-kit `compute_stop_stats` + per-stop
+  geometry; the four gotchas applied; `sjoin` to `geoid` in `transit/build.py` with
+  matched/unmatched diagnostics. A **service-density-aware date picker** selects a
+  peak-service weekday nearest the target anchor (avoids near-empty special-service dates —
+  MARTA's real service is confined to a narrow window).
+- **Stop-level service features:** `span_hours`, `overnight_flag`, route-mode set done in
+  `feeds.py`.
+- **Aggregate to BG + cache:** `build_all_transit()` writes
+  `data/interim/sources/transit.parquet` (registry cache; `refresh: bool` pattern), with
+  per-stop intermediates at `data/interim/transit/stops/{city}.parquet`. All joins in
+  `EPSG:4326`; area/centroid via equal-area `EPSG:5070`.
+- **Registry wired:** the `transit` `FeatureSource` (`backend="file"`) is in `FEATURE_SOURCES`
+  and read by `assemble_features`.
+
+### In-Progress
+
+- **Risky-facility co-location (H1/H3):** `near_risky` + `risky_allnight` logic implemented in
+  `colocation.py` (`add_risky_flags`), but the POI point layer (7-11 / liquor / ATM) is pulled
+  from the firmographics CLIP source in BigQuery (`build.load_risky_facilities`) — needs
+  credentials, so H1/H3 columns are currently emitted as 0 offline. Run `build_all_transit`
+  with BQ access to populate them.
+
+### Planned
+
+- **Distribution EDA (Phase 1):** null rate, cardinality, ranges, distributions per feature;
+  decide keep/transform/drop. Re-run once BQ POI points populate H1/H3.
+- **Registry + regression (Phase 3):** add EDA-validated features to `PREDICTOR_COLS`
+  (+ `ZERO_FILL`/`MEDIAN_FILL`); rebuild model table; fit with both-mains-plus-interaction;
+  check significance, VIF, residuals, Moran's I; validate transit coefficients against
+  `*_rate`; test city-heterogeneity interaction.
+- **(Optional)** drop a fresher mid-2025 SacRT feed zip and re-run (current Sacramento feed is
+  a stale Jan–Apr 2025 snapshot).
+- **Resolve the robbery offense-classification tension:** `hypothesis.md` guardrail 6 groups
+  robbery with violent crime ("weaker/opposite for assault/robbery"), but the H1/H2/H3
+  (catalog H7/H8/H7×H8) offense expectation lists robbery alongside larceny/MVT because it is
+  acquisitive (cash + low guardianship). Decide how robbery should be treated in the transit
+  offense-specificity tests and reconcile the wording across both docs.
+
+---
+
 ## 1. Key hypotheses & research roots
+
+> **Numbering note:** this plan uses a compact local scheme focused on the three hypotheses
+> being executed now. They map to the full catalog in `docs/hypothesis.md` as: **H1** →
+> H7 (risky-facility co-location, §3.7); **H2** → H8 (overnight/24-7 service, §3.8); **H3**
+> → the H7×H8 interaction (§4.3). The supply/context features (stop density, proximity,
+> service intensity, route-mode diversity) are catalog H1–H5 there and enter here as
+> controls.
 
 | # | Hypothesis | Theory root | Expected offense concentration |
 |---|-----------|-------------|-------------------------------|
@@ -163,37 +275,3 @@ interaction is significant while both mains are weak.
 | Risky × overnight (H3) | stop-level AND → BG count/share (Route A); centered product (Route B) | interaction + both mains |
 | (context) stop density | stops/km², kernel-weighted | main + quadratic |
 | (context) route-mode diversity | Shannon equitability over `route_type` | main |
-
----
-
-## 6. Execution checklist (next steps → maps to `eda_plan.md` phases)
-
-Status legend: [x] done · [~] partial / credential-gated · [ ] to do.
-
-1. [x] **Feasibility (Phase 2):** 2025 feeds downloaded for all five cities (Mobility
-   Database, keyed by stable `mdb_id` in `TRANSIT_FEEDS`); stop→`geoid` join coverage
-   confirmed (Chicago 9,935/10,792; Houston 7,972/8,918; SF 3,155/3,212; etc. — the
-   remainder are suburban stops outside city limits). POI co-location layer is BQ-gated
-   (see step 3).
-2. [x] **Prototype ingestion:** implemented for all five cities in
-   `transit/feeds.py` (`read_stop_features` / `load_city_stops`) via gtfs-kit
-   `compute_stop_stats` + per-stop geometry; the four gotchas applied; `sjoin` to `geoid`
-   in `transit/build.py` with matched/unmatched diagnostics. A **service-density-aware
-   date picker** selects a peak-service weekday nearest the target anchor (avoids
-   near-empty special-service dates — MARTA's real service is confined to a narrow window).
-3. [~] **Stop-level features:** `span_hours`, `overnight_flag`, route-mode set done in
-   `feeds.py`; `near_risky` co-location + H3 `risky_allnight` implemented in
-   `colocation.py` (`add_risky_flags`) but the POI point layer (7-11 / liquor / ATM) is
-   pulled from the firmographics CLIP source in BigQuery (`build.load_risky_facilities`)
-   — needs credentials, so H1/H3 columns are currently emitted as 0 offline.
-4. [x] **Aggregate to BG** and cache: `build_all_transit()` writes
-   `data/interim/sources/transit.parquet` (registry cache; `refresh: bool` pattern),
-   with per-stop intermediates at `data/interim/transit/stops/{city}.parquet`. All joins
-   in `EPSG:4326`; area/centroid via equal-area `EPSG:5070`.
-5. [ ] **Distribution EDA (Phase 1):** null rate, cardinality, ranges, distributions per
-   feature; decide keep/transform/drop. (Re-run once BQ POI points populate H1/H3.)
-6. [~] **Registry + regression (Phase 3):** `transit` `FeatureSource` (`backend="file"`)
-   is wired into `FEATURE_SOURCES` and read by `assemble_features`. Still to do: add
-   EDA-validated features to `PREDICTOR_COLS` (+ `ZERO_FILL`/`MEDIAN_FILL`); rebuild model
-   table; fit with both-mains-plus-interaction; check sig, VIF, residuals, Moran's I;
-   validate transit coefficients against `*_rate`; test city-heterogeneity interaction.

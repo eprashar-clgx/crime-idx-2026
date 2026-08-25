@@ -28,7 +28,7 @@ Phases run in dependency order; phases 1-3 loop per variable.
 | convenience_stores | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Broad dual-vintage NAICS (`445131`/`445120` convenience + `457110`/`447110` gas-w-mart) via generic `stores.sql`; replaces the old 7-Eleven-only `seven_eleven` proxy. |
 | liquor_stores | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Existing `liquor_stores` source (`business_name/brand LIKE %liquor%`). |
 | gas_stations | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Existing `gas_stations` source (`business_name LIKE %gas station%`). |
-| transit_stations | feasibility_unknown | Presence invites/attracts criminal activity | feasibility | — | Source unclear — BQ firmographics vs external GTFS/OSM? Check BG coverage + `geoid` joinability. |
+| transit_stations | feasibility_unknown | Presence invites/attracts criminal activity (co-location, overnight exposure, convergence-node effects) | engineered | — | **Resolved to external GTFS** (Mobility Database), not BQ firmographics. Built + cached for 8 cities via `regression_modelling/data_wrangling/transit/`; 10 BG features in the `transit` `FeatureSource` (`backend="file"`). See `docs/features/transit_eda_plan.md`. Co-location H1/H3 columns BQ-gated (need POI points). Next: distribution EDA, then promote to `PREDICTOR_COLS`. |
 | structure_density | feasibility_unknown | Denser -> less crime; low density may = dilapidated blocks -> more crime | feasibility | — | Explore interaction of vacant parcels x structure density x roof/age/condition (IDAP property data). |
 
 ## Open feature-engineering questions
@@ -50,3 +50,9 @@ Phases run in dependency order; phases 1-3 loop per variable.
   `notebooks/regression_modelling/distributions/store_eda.ipynb`.
   Fixed an AND/OR precedence bug in the original filter. Next: run in BQ, confirm
   NAICS codes per store, then decide the BG spatial feature form (radius vs nearest).
+- 2026-08-25: Transit feasibility **resolved** — chose external GTFS (Mobility Database) over
+  BQ firmographics/OSM. Built the `transit/` ingestion module (gtfs-kit) and cached 10 BG
+  features for 8 cities to `data/interim/sources/transit.parquet`; wired the file-backed
+  `transit` `FeatureSource`. Risky-facility co-location (H1/H3) is implemented but emits zeros
+  offline (POI points are BQ-gated). Next: distribution EDA, then promote validated features to
+  `PREDICTOR_COLS`. Full plan + status: `docs/features/transit_eda_plan.md`.
