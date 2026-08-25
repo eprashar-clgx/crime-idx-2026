@@ -88,8 +88,9 @@ FEATURE_SOURCES = {
         feature_cols=("unq_liquor_stores_clips",),
     ),
     # Transit is materialized out-of-band by transit.build.build_all_transit (backend="file").
-    # Covers the 5 POC cities only; null elsewhere on the national spine. feature_cols are the
-    # candidate BG predictors (docs/transit_eda_plan.md §5); promote to PREDICTOR_COLS after EDA.
+    # Covers the 8 ingested cities only; null elsewhere on the national spine. feature_cols are
+    # the candidate BG predictors (docs/features/transit_eda_plan.md §5); the non-geo ones are
+    # promoted to PREDICTOR_COLS, the risky (POI-geo) ones stay gated until the BQ pull lands.
     "transit": FeatureSource(
         name="transit",
         backend="file",
@@ -156,6 +157,20 @@ PREDICTOR_COLS = [
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
+    # transit (GTFS) — non-geo supply/exposure + overnight features, POC cities only.
+    # See docs/features/transit_eda_plan.md. Evaluate distributions before trusting these.
+    "transit_stop_count",
+    "transit_stop_density",
+    "transit_nearest_stop_m",
+    "transit_service_intensity",
+    "transit_overnight_stop_count",
+    "transit_overnight_stop_share",
+    "transit_route_mode_diversity",
+    # risky-facility co-location (H1) + interaction (H3) — need the BigQuery POI point pull
+    # to populate (currently emit 0 offline). Promote once evaluated. See eda_plan.md.
+    # "transit_risky_stop_count",
+    # "transit_risky_stop_share",
+    # "transit_risky_allnight_count",
 ]
 
 ZERO_FILL = [
@@ -165,5 +180,18 @@ ZERO_FILL = [
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
+    # transit: null on the national spine / BGs with no stop = genuinely 0 transit
+    "transit_stop_count",
+    "transit_stop_density",
+    "transit_service_intensity",
+    "transit_overnight_stop_count",
+    "transit_overnight_stop_share",
+    "transit_route_mode_diversity",
+    # "transit_risky_stop_count",      # promote with the risky predictors above
+    # "transit_risky_stop_share",
+    # "transit_risky_allnight_count",
 ]                                                       # 0 = none observed
-MEDIAN_FILL = ["city_centers_dist", "pop_est_5mile", "pop_ch_1mile"]  # 0 would be wrong
+MEDIAN_FILL = [
+    "city_centers_dist", "pop_est_5mile", "pop_ch_1mile",  # 0 would be wrong
+    "transit_nearest_stop_m",                              # distance; 0 = stop at centroid
+]
