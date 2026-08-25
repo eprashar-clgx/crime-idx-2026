@@ -1,5 +1,7 @@
 # Repo specific folders
-/data
+/data/interim
+/data/raw
+/data/processed
 /context
 /.agents
 /.github
