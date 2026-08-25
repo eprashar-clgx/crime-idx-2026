@@ -181,6 +181,10 @@ CITIES = {
         date_col="occurrence_date_pt",
         property_only=True,
     ),
+    # NOTE: San Francisco is treated PROPERTY-ONLY. DataSF surfaces only ~21 incidents/yr
+    # under the "Rape" category (coords present but the count is implausibly low for SF,
+    # ~350/yr expected) — sexual assault is effectively not published as mappable rape.
+    # Non-rape violent (robbery/assault/murder) is well geolocated.
     "san_francisco": CityConfig(
         name="San Francisco",
         state_fips="06",
@@ -191,7 +195,11 @@ CITIES = {
         crime_type_col="incident_category",
         crime_type_mapping=SF_CATEGORY_TO_CATEGORY,
         date_col="incident_date",
+        property_only=True,
     ),
+    # NOTE: Pittsburgh is treated PROPERTY-ONLY. The WPRDC feed nulls coordinates for all
+    # sex offenses at the source: 301 rape rows (11A-D, 36B) in 2025, 0 geolocated, while
+    # overall coverage is ~99%. Non-rape violent is geolocated.
     "pittsburgh": CityConfig(
         name="Pittsburgh",
         state_fips="42",
@@ -203,6 +211,7 @@ CITIES = {
         crime_type_col="nibrs_offense_code",
         crime_type_mapping=NIBRS_TO_CATEGORY,
         date_col="reporteddate",
+        property_only=True,
     ),
     # Kansas City, MO. KCPD Socrata export (dmnp-9ajg). One row per person-involvement
     # (VIC/SUS/ARR), so rows are collapsed to one per (report_no, ibrs) offense. Coordinates
