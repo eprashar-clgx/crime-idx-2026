@@ -116,16 +116,17 @@ def _route_types_by_stop(feed) -> pd.Series:
 
 
 def _clean_feed_ids(feed):
-    """Strip stray whitespace from GTFS id columns (defensive against malformed feeds).
+    """Strip stray whitespace from GTFS id and date columns (defensive against malformed feeds).
 
-    Some agencies ship ids padded with spaces (e.g. SacRT's ``calendar.service_id`` is
-    ``' 1'`` while ``trips.service_id`` is ``'1'``), which silently breaks gtfs-kit's
-    calendar<->trips join and yields *zero* active service. Trimming the join-relevant id
-    columns in place fixes it without touching feature logic.
+    Some agencies ship values padded with spaces: e.g. SacRT's ``calendar.service_id`` is
+    ``' 1'`` while ``trips.service_id`` is ``'1'`` (silently breaks gtfs-kit's calendar<->trips
+    join → *zero* active service), and DDOT's ``calendar.end_date`` is ``'20250914 '`` (breaks
+    gtfs-kit's ``datestr_to_date`` with "unconverted data remains"). Trimming the join- and
+    parse-relevant columns in place fixes both without touching feature logic.
     """
     id_cols = {
-        "calendar": ["service_id"],
-        "calendar_dates": ["service_id"],
+        "calendar": ["service_id", "start_date", "end_date"],
+        "calendar_dates": ["service_id", "date"],
         "trips": ["service_id", "trip_id", "route_id"],
         "stop_times": ["trip_id", "stop_id"],
         "stops": ["stop_id", "parent_station"],

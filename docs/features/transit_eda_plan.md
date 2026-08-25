@@ -74,7 +74,7 @@ Maps to `eda_plan.md` phases. Detail on gotchas and code locations follows in se
 
 ### Done
 
-- **Feeds downloaded (Phase 2):** 2025 feeds for all eight cities from the Mobility Database,
+- **Feeds downloaded (Phase 2):** 2025 feeds for all ten cities from the Mobility Database,
   keyed by stable `feed_id` in `TRANSIT_FEEDS`. Stop→`geoid` join coverage confirmed (Chicago
   9,935/10,792; Houston 7,972/8,918; SF 3,155/3,212; etc. — remainder are suburban stops
   outside city limits).
@@ -111,6 +111,11 @@ Maps to `eda_plan.md` phases. Detail on gotchas and code locations follows in se
   `*_rate`; test city-heterogeneity interaction.
 - **(Optional)** drop a fresher mid-2025 SacRT feed zip and re-run (current Sacramento feed is
   a stale Jan–Apr 2025 snapshot).
+- **Revisit feed coverage / expansion candidates (§3.2):** several cities run rail or streetcar
+  under separate agency feeds not yet ingested (notably Detroit QLINE + People Mover, Chicago
+  Metra/Pace, SF Caltrain). Decide whether to add them before finalizing
+  `transit_route_mode_diversity` and rail-proximity — Detroit is bus-only in-feed today, which
+  understates its rail nodes.
 - **Resolve the robbery offense-classification tension:** `hypothesis.md` guardrail 6 groups
   robbery with violent crime ("weaker/opposite for assault/robbery"), but the H1/H2/H3
   (catalog H7/H8/H7×H8) offense expectation lists robbery alongside larceny/MVT because it is
@@ -245,6 +250,36 @@ feeds. Here's the landscape and why we deliberately stay on the static side:
 **Honest limitation to record:** static GTFS cannot measure *realized* crowding, so the crowding
 channel behind H3 is approximated, not observed. If APC or fare-card data ever becomes available for a
 city, revisit that channel then.
+
+### 3.2 Feed inventory per city (and expansion candidates)
+
+One primary agency feed is ingested per city (SF uses two). Modes below are the GTFS
+`route_type`s actually present in each feed. **Most feeds are bus-only or bus-dominant; the
+`transit_route_mode_diversity` feature only lights up where a city's own feed carries rail.**
+Several metros run rail/streetcar under *separate* agency feeds we have not pulled — flagged
+as expansion candidates. **Come back to this** before finalizing the mode-diversity feature:
+adding the missing rail feeds would materially change Detroit's and Chicago's profiles.
+
+| City | Feed (agency) | Modes in feed | Expansion candidates (separate feeds, not yet ingested) |
+|------|---------------|---------------|----------------------------------------------------------|
+| Chicago | CTA (`mdb-389`) | heavy rail ('L') + bus | **Metra** commuter rail, **Pace** suburban bus |
+| Houston | METRO (`mdb-2060`) | light rail + bus | — (METRO covers the city) |
+| Atlanta | MARTA (`mdb-368`) | heavy rail + streetcar + bus | CobbLinc / GRTA Xpress suburban bus |
+| San Francisco | Muni (`mdb-2886`) + BART (`mdb-53`) | light rail, streetcar, cable car, heavy rail (BART) + bus | **Caltrain** (downtown terminus), SamTrans, Golden Gate |
+| Pittsburgh | PRT (`mdb-409`) | light rail (the T) + funicular inclines + bus | — (PRT covers bus + rail + inclines) |
+| Jacksonville | JTA (`tld-764`) | Skyway automated people-mover + ferry + bus | — (JTA covers all city modes) |
+| Kansas City | KCATA / RideKC (`mdb-187`) | KC Streetcar (light rail) + bus | IRIS / Unified Gov (KCK) suburban bus |
+| Sacramento | SacRT (`mdb-2137`) | light rail + bus | — (SacRT covers the city) |
+| Detroit | DDOT (`mdb-464`) | **bus only** | **QLINE** streetcar, **Detroit People Mover** (monorail), **SMART** suburban bus |
+| Columbus | COTA (`mdb-404`) | **bus only** | — (Columbus has no rail; CBUS circulator is a COTA bus) |
+
+**Takeaways to revisit:**
+- **Detroit** is bus-only in-feed today; its QLINE + People Mover are real rail nodes missing
+  from the mode-diversity signal. Adding them would raise Detroit's diversity and rail-proximity
+  scores (relevant to the Detroit-vs-KC comparison, which currently understates Detroit's rail).
+- **Chicago** ingests CTA rail+bus but not Metra/Pace, so far-out BGs served only by commuter
+  rail read as transit-poor. Consider Metra if edge coverage matters.
+- Where "—" is listed, the single agency feed already spans the city's modes; no action needed.
 
 ---
 

@@ -37,6 +37,8 @@ TRANSIT_FEEDS = {
     "jacksonville":  (TransitFeed("jta",   "tld-764"),),
     "kansas_city":   (TransitFeed("kcata", "mdb-187"),),
     "sacramento":    (TransitFeed("sacrt", "mdb-2137"),),
+    "detroit":       (TransitFeed("ddot",  "mdb-464"),),
+    "columbus":      (TransitFeed("cota",  "mdb-404"),),
 }
 
 # Representative service date to pin trips/day and service span (a typical Wednesday,
@@ -88,7 +90,7 @@ FEATURE_SOURCES = {
         feature_cols=("unq_liquor_stores_clips",),
     ),
     # Transit is materialized out-of-band by transit.build.build_all_transit (backend="file").
-    # Covers the 8 ingested cities only; null elsewhere on the national spine. feature_cols are
+    # Covers the 10 ingested cities only; null elsewhere on the national spine. feature_cols are
     # the candidate BG predictors (docs/features/transit_eda_plan.md §5); the non-geo ones are
     # promoted to PREDICTOR_COLS, the risky (POI-geo) ones stay gated until the BQ pull lands.
     "transit": FeatureSource(
