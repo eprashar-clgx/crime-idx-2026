@@ -20,8 +20,10 @@ GTFS gotchas handled here (see docs/transit_eda_plan.md §2):
 from __future__ import annotations
 
 import datetime as _dt
-
 import pandas as pd
+import gtfs_kit as gk
+import numpy as np
+from scipy.spatial import cKDTree
 
 from regression_modelling.config import transit_feed_zip, transit_stops_parquet
 from regression_modelling.constants import TRANSIT_FEEDS, TRANSIT_REPRESENTATIVE_DATE
@@ -155,7 +157,7 @@ def read_stop_features(zip_path, service_date: str | None = None) -> pd.DataFram
     (gotcha 1). Child platforms are collapsed onto ``parent_station`` (gotcha 2) and
     only boardable stops are kept (gotcha 3).
     """
-    import gtfs_kit as gk
+    
 
     feed = _clean_feed_ids(gk.read_feed(str(zip_path), dist_units="km"))
     date = _resolve_service_date(feed, service_date)
@@ -284,8 +286,6 @@ def _dedup_shared_stations(stops: pd.DataFrame) -> pd.DataFrame:
     route_types so mode diversity is preserved. Approximate metric distance via a local
     equirectangular projection — adequate at ~100m scales.
     """
-    import numpy as np
-    from scipy.spatial import cKDTree
 
     df = stops.reset_index(drop=True)
     lat0 = np.radians(df["stop_lat"].mean())
