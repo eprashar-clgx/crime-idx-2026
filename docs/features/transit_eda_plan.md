@@ -116,6 +116,21 @@ Maps to `eda_plan.md` phases. Detail on gotchas and code locations follows in se
   Metra/Pace, SF Caltrain). Decide whether to add them before finalizing
   `transit_route_mode_diversity` and rail-proximity — Detroit is bus-only in-feed today, which
   understates its rail nodes.
+- **Harden the representative-date picker (`_resolve_service_date`):** the current single fixed
+  anchor (`2025-06-04`, peak-service weekday) is a fragility point. It already self-corrects for
+  holidays (the ≥80%-of-peak filter) and tolerates different feed windows (the anchor is a soft
+  tiebreaker), but three residual risks remain: (1) **seasonality** — an absolute June anchor can
+  bias toward summer schedules that drop school/seasonal routes; (2) **weekend-only overnight
+  service** — sampling one weekday understates `overnight_flag`/H2 where night-owl service runs
+  only Fri/Sat; (3) **absolute-year anchoring** — for a non-2025 feed, proximity-to-anchor decays
+  to "closest feed boundary." Options to implement (recommend A+B+D, C optional): **A** feed-
+  relative anchor (feed midpoint / median active date, or align to the crime-data year) instead
+  of an absolute date; **B** multi-day-type sampling (weekday + Saturday + Sunday) combined via
+  `overnight = OR`, `span = max`, trips = weekday or 5:1:1 weekly average — closes the H2 gap;
+  **C** median trips/day over all typical weekdays in the feed instead of a single date; **D**
+  explicit deterministic fallback ladder (explicit date → peak weekday ≥ threshold → best any-day
+  with warn → hard error) plus per-feed telemetry (chosen date, day-of-week, trips, % of peak).
+  Not urgent — current output is fine for the first EDA/regression pass.
 - **Resolve the robbery offense-classification tension:** `hypothesis.md` guardrail 6 groups
   robbery with violent crime ("weaker/opposite for assault/robbery"), but the H1/H2/H3
   (catalog H7/H8/H7×H8) offense expectation lists robbery alongside larceny/MVT because it is
