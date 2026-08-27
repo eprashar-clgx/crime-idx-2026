@@ -32,7 +32,7 @@ Phases run in dependency order; phases 1-3 loop per variable.
 | structure_density | feasibility_unknown | Denser -> less crime; low density may = dilapidated blocks -> more crime | feasibility | — | Explore interaction of vacant parcels x structure density x roof/age/condition (IDAP property data). |
 | acs_predictors | bq_ready | Socioeconomic context (e.g. income, tenure, vacancy) predicts crime | in_regression | — | **Wired**: `own_pct` (owner-occupied %), `lap_pct` (5+ unit structures %) added to `ACS_COLS` (features.py) + `DEMOGRAPHIC_PREDICTORS`. Predictors only. |
 | acs_protected | n/a | Bias-testing only — must NOT predict | engineered | — | **Wired**: `md_hhinc`, `wht_pct` → `bias_testing.PROTECTED_ATTRIBUTES` + `bias_testing/data.py` (`build_protected_table`), cached to `data/interim/bias/`. Never in `PREDICTOR_COLS` (ADR 0004). |
-| imagery_structure | bq_ready | Structure roof/parcel condition relates to crime | sql_eda | — | **Wired**: Vexcel structure-level → BG averages via `sql/build/imagery.sql` (clip→BG xref, no tract broadcast) + `FEATURE_SOURCES["imagery"]` + `IMAGERY_PREDICTORS` (5 candidates, **not** yet in `PREDICTOR_COLS`). Build in console per county FIPS (`run_bq_build_imagery`); decide predictor cols after 01_eda. |
+| imagery_structure | bq_ready | Structure roof/parcel condition relates to crime | sql_eda | — | **Wired**: Vexcel structure-level → BG averages via `sql/build/imagery.sql` (clip→BG xref, no tract broadcast) + `FEATURE_SOURCES["imagery"]` + `IMAGERY_PREDICTORS` (5 candidates, **not** yet in `PREDICTOR_COLS`). Built national in console (`run_bq_build_imagery`); decide predictor cols after 01_eda. |
 
 ## Open feature-engineering questions
 

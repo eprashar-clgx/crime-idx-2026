@@ -60,16 +60,14 @@ def run_bq_build_store(store: str) -> None:
     _bq_client().query(sql).result()
 
 
-def run_bq_build_imagery(fips_filter: str) -> None:
-    """Materialize the BG Vexcel imagery table via sql/build/imagery.sql.
+def run_bq_build_imagery() -> None:
+    """Materialize the national BG Vexcel imagery table via sql/build/imagery.sql.
 
-    `fips_filter` is a quoted, comma-separated county FIPS list scoping both the Vexcel
-    read and the xref (e.g. "'17031'" for Cook County, or "'17031','48201'"). NOTE: Vexcel
-    lives in a prd project; run this where those tables are reachable (BQ console), which
-    writes bg_imagery to the dev staging dataset that run_bq_pull can then read.
+    NOTE: Vexcel lives in a prd project; run this where those tables are reachable (BQ
+    console), which writes bg_imagery to the dev staging dataset that run_bq_pull can
+    then read.
     """
-    sql = load_sql("imagery", "build", fips_filter=fips_filter)
-    _bq_client().query(sql).result()
+    _bq_client().query(load_sql("imagery", "build")).result()
 
 def run_bq_pull(name: str) -> pd.DataFrame:
     """Pull a materialized feature table into a DataFrame."""
