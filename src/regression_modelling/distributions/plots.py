@@ -81,6 +81,79 @@ def plot_distribution(df, crime_type='cl_total', suffix='count', block_groups='a
     plt.tight_layout()
     plt.show()
 
+def correlation_matrix(df, cols=None, method='pearson', drop_constant=True,
+                       plot=True, title=None, annot=True, figsize=(9, 7.5), labels=None):
+    """General predictor correlation matrix with a zero-variance guard.
+
+    Unlike `plot_correlation_heatmap` (model _pt_ct vs actual crime), this correlates an
+    arbitrary set of predictor columns among themselves — used for redundancy / collinearity
+    EDA (e.g. the transit model-form features from
+    `feature_engineering.transforms.apply_transforms`).
+
+    Args:
+        df: DataFrame containing `cols`.
+        cols: columns to correlate. Defaults to every numeric column in `df`.
+        method: 'pearson' (what OLS/VIF see — sensitive to functional form) or 'spearman'
+            (rank-based, invariant to any monotonic transform).
+        drop_constant: skip zero-/near-zero-variance columns (e.g. all-zero offline
+            features like transit_risky_* or a degenerate mode_diversity) with a note,
+            instead of emitting NaN rows. Keeps the matrix clean as the column set grows.
+        plot: draw a heatmap (else just return the matrix).
+        title, annot, figsize: plotting options.
+        labels: optional {col: short_label} for display.
+
+    Returns:
+        The correlation DataFrame (on the retained columns).
+    """
+    cols = list(cols) if cols is not None else df.select_dtypes('number').columns.tolist()
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        raise KeyError(f"correlation_matrix: columns not in df: {missing}")
+
+    X = df[cols].apply(pd.to_numeric, errors='coerce')
+
+    if drop_constant:
+        stds = X.std(numeric_only=True)
+        const = stds[(stds.isna()) | (stds == 0)].index.tolist()
+        if const:
+            print(f"correlation_matrix: skipping zero-variance columns "
+                  f"(offline/degenerate?): {const}")
+            X = X.drop(columns=const)
+
+    if X.shape[1] < 2:
+        print("correlation_matrix: fewer than 2 non-constant columns — nothing to correlate.")
+        return X.corr(method=method)
+
+    corr = X.corr(method=method)
+    disp = corr.copy()
+    if labels:
+        disp = disp.rename(index=labels, columns=labels)
+
+    if plot:
+        if title is None:
+            title = f"{method.title()} correlation ({X.shape[1]} features, {len(X):,} rows)"
+        fig, ax = plt.subplots(figsize=figsize)
+        sns.heatmap(disp, annot=annot, fmt='.2f', cmap='RdBu_r', center=0, vmin=-1, vmax=1,
+                    square=True, cbar_kws={'shrink': .8}, ax=ax)
+        ax.set_title(title)
+        plt.tight_layout()
+        plt.show()
+
+    # Report strongly collinear pairs
+    ac = corr.abs()
+    strong = [(ac.index[i], ac.columns[j], corr.iloc[i, j])
+              for i in range(len(ac)) for j in range(i + 1, len(ac))
+              if ac.iloc[i, j] >= 0.7]
+    if strong:
+        print(f"\nStrong |{method}| >= 0.70 pairs:")
+        for a, b, r in sorted(strong, key=lambda t: -abs(t[2])):
+            la = labels.get(a, a) if labels else a
+            lb = labels.get(b, b) if labels else b
+            print(f"  {la:>28} ~ {lb:<28} {r:+.2f}")
+
+    return corr
+
+
 def plot_correlation_heatmap(comparison_df, block_groups='all', actual_suffix='count', title=None):
     """Spearman correlation heatmap: model _pt_ct vs actual crime measures.
     
