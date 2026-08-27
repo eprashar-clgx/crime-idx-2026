@@ -182,8 +182,6 @@ TRANSIT_PREDICTORS = [
     "transit_route_mode_diversity",
 ]
 
-PREDICTOR_COLS = [*DEMOGRAPHIC_PREDICTORS, *PROPERTY_PREDICTORS, *TRANSIT_PREDICTORS]
-
 # Functional form for transit predictors in modeling/EDA (see distribution EDA,
 # docs/features/transit_eda_plan.md §5). Single source of truth consumed by
 # feature_engineering.transforms.apply_transforms:
@@ -201,6 +199,28 @@ TRANSIT_MODEL_TRANSFORMS = {
     "transit_overnight_stop_share": "identity",
     "transit_route_mode_diversity": "identity",
 }
+
+# Retained transit predictors in model form (the redundancy-pruned set from the correlation
+# EDA — see docs/features/transit_stats.md). These are produced by
+# feature_engineering.transforms.apply_transforms(hurdle=True) and are what actually enter
+# PREDICTOR_COLS / the OLS. Names follow the transform naming convention (kept as literals to
+# avoid a constants→feature_engineering import cycle):
+#   transit_has_transit             extensive margin (1[stop_count > 0])
+#   transit_service_intensity_logc  intensive supply, log1p centered on served mass (hurdle)
+#   transit_nearest_stop_m_log      access/proximity, log1p
+#   transit_overnight_stop_share    H2 nighttime exposure, raw bounded [0,1]
+TRANSIT_MODEL_PREDICTORS = [
+    "transit_has_transit",
+    "transit_service_intensity_logc",
+    "transit_nearest_stop_m_log",
+    "transit_overnight_stop_share",
+]
+
+# Active fit-set: demographic + property (raw) + transit (model form). PREDICTOR_COLS is
+# DERIVED so it cannot drift from its parts. The raw TRANSIT_PREDICTORS above are the
+# transform *inputs* (and imputation targets in ZERO_FILL/MEDIAN_FILL); they are replaced
+# here by the pruned TRANSIT_MODEL_PREDICTORS.
+PREDICTOR_COLS = [*DEMOGRAPHIC_PREDICTORS, *PROPERTY_PREDICTORS, *TRANSIT_MODEL_PREDICTORS]
 
 ZERO_FILL = [
     "vacant_pct",

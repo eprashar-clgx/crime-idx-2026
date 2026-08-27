@@ -18,6 +18,7 @@ from regression_modelling.constants import (
     TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL,
 )
 from regression_modelling.data_wrangling.features import assemble_features
+from regression_modelling.feature_engineering.transforms import apply_transforms
 
 
 def build_bg_crime(city: str, refresh: bool = False) -> pd.DataFrame:
@@ -65,9 +66,15 @@ def build_model_table(city: str, refresh: bool = False,
     if inside_city_only:
         df = df[df["within_city"] == True].copy()
 
-    # explicit per-column imputation of predictors
+    # explicit per-column imputation of RAW predictors (incl. raw transit transform inputs)
     df[ZERO_FILL]   = df[ZERO_FILL].fillna(0)
     df[MEDIAN_FILL] = df[MEDIAN_FILL].fillna(df[MEDIAN_FILL].median())
+
+    # derive transit model-form predictors from the imputed raw columns: hurdle form
+    # (transit_has_transit + service_intensity log1p centered on the served mass) plus
+    # log1p distance/supply. These are the transit entries of PREDICTOR_COLS.
+    # See docs/features/transit_stats.md.
+    df, _ = apply_transforms(df, hurdle=True)
 
     # log(count + 1) targets (primary); *_rate kept as validators
     for c in count_cols:
