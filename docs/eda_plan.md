@@ -30,6 +30,9 @@ Phases run in dependency order; phases 1-3 loop per variable.
 | gas_stations | bq_ready | Presence invites/attracts criminal activity | sql_eda | — | Existing `gas_stations` source (`business_name LIKE %gas station%`). |
 | transit_stations | feasibility_unknown | Presence invites/attracts criminal activity (co-location, overnight exposure, convergence-node effects) | engineered | — | **Resolved to external GTFS** (Mobility Database), not BQ firmographics. Built + cached for 8 cities via `regression_modelling/data_wrangling/transit/`; 10 BG features in the `transit` `FeatureSource` (`backend="file"`). See `docs/features/transit_eda_plan.md`. Co-location H1/H3 columns BQ-gated (need POI points). Next: distribution EDA, then promote to `PREDICTOR_COLS`. |
 | structure_density | feasibility_unknown | Denser -> less crime; low density may = dilapidated blocks -> more crime | feasibility | — | Explore interaction of vacant parcels x structure density x roof/age/condition (IDAP property data). |
+| acs_predictors | bq_ready | Socioeconomic context (e.g. income, tenure, vacancy) predicts crime | inventory | — | Subset of columns from the ACS `.sav` already ingested. **Mix**: some are predictors (registry path), some are protected-attribute flags (bias-only table, ADR 0004). Route at ingestion. |
+| acs_protected | n/a | Bias-testing only — must NOT predict | inventory | — | Protected attributes (e.g. race) → `bias_testing.PROTECTED_ATTRIBUTES`, separate `geoid`-keyed table, never in `PREDICTOR_COLS` (ADR 0004). |
+| imagery_structure | bq_ready | Structure density/condition relates to crime | inventory | — | **Structure-level** IDAP source (user provides SQL). Existing SQL groups by tract; re-aggregate to BG `geoid` via build/pull (not a tract broadcast). New imagery predictor family in `constants.py`. |
 
 ## Open feature-engineering questions
 
@@ -56,3 +59,27 @@ Phases run in dependency order; phases 1-3 loop per variable.
   `transit` `FeatureSource`. Risky-facility co-location (H1/H3) is implemented but emits zeros
   offline (POI points are BQ-gated). Next: distribution EDA, then promote validated features to
   `PREDICTOR_COLS`. Full plan + status: `docs/features/transit_eda_plan.md`.
+
+## Refined 6-step plan (ACS/imagery → regression → bias) — grilled 2026-08-27
+
+Decisions locked in ADR 0003 (regression reframe), ADR 0004 (bias-testing), ADR 0005
+(weighted-score promotion). Steps run in order:
+
+1. **Import ACS + imagery features.** ACS = a **mix**: predictor columns via the registry
+   (`FEATURE_SOURCES`/`PREDICTOR_COLS`), protected-attribute flags via a **separate
+   bias-only table** (`bias_testing.PROTECTED_ATTRIBUTES`, ADR 0004). Imagery =
+   **structure-level** BQ source, re-aggregated to BG `geoid` (build/pull, new imagery
+   predictor family) — user provides SQL.
+2. **Distribution EDA** for the new features (re-run `01_eda`; extend as needed).
+3. **Correlation + VIF as diagnostics only** — no auto-pruning; human decides drops with
+   written rationale. Whitelist logic (orthogonal transit pair, exposure terms) is not
+   "fixed" (ADR 0003).
+4. **Regression reframe (ADR 0003):** pooled fit + **grouped CV by city**
+   (leave-one/-k-cities-out); **archive** the per-city fit as a heterogeneity baseline.
+   Primary target **`crime_rate`** (drop zero/NaN-pop BGs); comparators `log(count+1)` and
+   the **weighted rate** (math promoted to the foundation, ADR 0005).
+5. **Examine results** — adjusted R², residuals, Moran's I on the filtered geoid set;
+   commentary.
+6. **Bias testing (ADR 0004)** — for significant predictors, report raw `corr(X, protected)`
+   **and** conditional association; soft-flag for human review (keep-with-caveat / drop /
+   investigate), never auto-drop.
