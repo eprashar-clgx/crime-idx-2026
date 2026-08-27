@@ -169,7 +169,6 @@ TARGET_CATEGORIES = [
 # from these groups — it is the single active fit-set and cannot drift from its parts.
 DEMOGRAPHIC_PREDICTORS = [
     "det_pct",              # Percentage of housing units that are single family detached houses
-    "in_household_pct",     # Percent of the population living in households
     "moved1yr_pct",         # Percentage of households moving in past year
     "own_pct",              # Percentage of owner-occupied housing units
     "lap_pct",              # Percentage of housing units in 5+ unit structures

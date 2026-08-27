@@ -12,6 +12,10 @@ for a protected attribute; leakage into the fit is impossible by construction.
 PROTECTED_ATTRIBUTES = {
     "md_hhinc": "Median household income",
     "wht_pct":  "Percentage of population White and not Hispanic",
+    # Complement (100 - value) is the group-quarters share: dorms, prisons, nursing homes,
+    # military barracks, shelters. A sensitive/institutionalized-population proxy, not a
+    # predictor — its low tail also corrupts crime counts and per-capita rate denominators.
+    "in_household_pct": "Percent of population living in households (group-quarters/institutionalization proxy)",
 }
 
 # The columns as they appear in bg_acs.sav (source of truth for the loader).

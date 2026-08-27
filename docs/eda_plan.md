@@ -31,7 +31,7 @@ Phases run in dependency order; phases 1-3 loop per variable.
 | transit_stations | feasibility_unknown | Presence invites/attracts criminal activity (co-location, overnight exposure, convergence-node effects) | engineered | — | **Resolved to external GTFS** (Mobility Database), not BQ firmographics. Built + cached for 8 cities via `regression_modelling/data_wrangling/transit/`; 10 BG features in the `transit` `FeatureSource` (`backend="file"`). See `docs/features/transit_eda_plan.md`. Co-location H1/H3 columns BQ-gated (need POI points). Next: distribution EDA, then promote to `PREDICTOR_COLS`. |
 | structure_density | feasibility_unknown | Denser -> less crime; low density may = dilapidated blocks -> more crime | feasibility | — | Explore interaction of vacant parcels x structure density x roof/age/condition (IDAP property data). |
 | acs_predictors | bq_ready | Socioeconomic context (e.g. income, tenure, vacancy) predicts crime | in_regression | — | **Wired**: `own_pct` (owner-occupied %), `lap_pct` (5+ unit structures %) added to `ACS_COLS` (features.py) + `DEMOGRAPHIC_PREDICTORS`. Predictors only. |
-| acs_protected | n/a | Bias-testing only — must NOT predict | engineered | — | **Wired**: `md_hhinc`, `wht_pct` → `bias_testing.PROTECTED_ATTRIBUTES` + `bias_testing/data.py` (`build_protected_table`), cached to `data/interim/bias/`. Never in `PREDICTOR_COLS` (ADR 0004). |
+| acs_protected | n/a | Bias-testing only — must NOT predict | engineered | — | **Wired**: `md_hhinc`, `wht_pct`, `in_household_pct` → `bias_testing.PROTECTED_ATTRIBUTES` + `bias_testing/data.py` (`build_protected_table`), cached to `data/interim/bias/`. Never in `PREDICTOR_COLS` (ADR 0004). |
 | imagery_structure | bq_ready | Structure roof/parcel condition relates to crime | sql_eda | — | **Built national** + screened in `01_eda` (Step 2). ~99% inside-city coverage; `roof_missing_material_pct` ~5% missing + ~0 signal. Directional (Spearman vs cl_total rate): `roof_condition_avg` consistent negative (Chi −0.42, Hou −0.12, KC −0.20), others weak/Chicago-only. Promotion decision deferred to Step 3 (VIF). |
 
 ## Open feature-engineering questions
@@ -59,6 +59,12 @@ Phases run in dependency order; phases 1-3 loop per variable.
   `transit` `FeatureSource`. Risky-facility co-location (H1/H3) is implemented but emits zeros
   offline (POI points are BQ-gated). Next: distribution EDA, then promote validated features to
   `PREDICTOR_COLS`. Full plan + status: `docs/features/transit_eda_plan.md`.
+- 2026-08-27: Reclassified `in_household_pct` **predictor → protected**. It is the household
+  share of population; its complement is the group-quarters share (dorms, prisons, nursing
+  homes, barracks, shelters), i.e. an institutionalized/sensitive-population proxy, not
+  homelessness per se. Dropped from `DEMOGRAPHIC_PREDICTORS`/`ACS_COLS` (also a weak feature:
+  ~98%+ and near-constant, and its low tail corrupts crime counts + per-capita rate
+  denominators) and added to `bias_testing.PROTECTED_ATTRIBUTES`. `PREDICTOR_COLS` now 22.
 
 ## Refined 6-step plan (ACS/imagery → regression → bias) — grilled 2026-08-27
 
