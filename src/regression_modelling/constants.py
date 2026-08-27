@@ -145,22 +145,34 @@ TARGET_CATEGORIES = [
     "burglary", "larceny", "mvt",
 ]
 
-# predictors that vary within a single city (Division is constant per-city → excluded)
-PREDICTOR_COLS = [
+# Predictors that vary within a single city (Division is constant per-city → excluded).
+# Organized into semantic families so analysis code can select a slice (e.g. correlation on
+# TRANSIT_PREDICTORS) without minting a per-purpose constant. PREDICTOR_COLS below is DERIVED
+# from these groups — it is the single active fit-set and cannot drift from its parts.
+DEMOGRAPHIC_PREDICTORS = [
     "det_pct",              # Percentage of housing units that are single family detached houses
     "in_household_pct",     # Percent of the population living in households
     "moved1yr_pct",         # Percentage of households moving in past year
     "city_centers_dist",    # Distance in miles from central business district of nearest city
     "pop_est_5mile",        # Population density within 5 miles
     "pop_ch_1mile",         # Population change within 1 mile
+]
+
+PROPERTY_PREDICTORS = [
     "vacant_pct",
     "clip_liens_pct",
     "clip_foreclosure_pct",
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
-    # transit (GTFS) — non-geo supply/exposure + overnight features, POC cities only.
-    # See docs/features/transit_eda_plan.md. Evaluate distributions before trusting these.
+]
+
+# transit (GTFS) — non-geo supply/exposure + overnight features, POC cities only.
+# See docs/features/transit_eda_plan.md. Raw columns; functional form for modeling/EDA is
+# given by TRANSIT_MODEL_TRANSFORMS below. The risky-facility co-location (H1) + interaction
+# (H3) columns need the BigQuery POI point pull to populate (emit 0 offline) — gated here:
+#   "transit_risky_stop_count", "transit_risky_stop_share", "transit_risky_allnight_count"
+TRANSIT_PREDICTORS = [
     "transit_stop_count",
     "transit_stop_density",
     "transit_nearest_stop_m",
@@ -168,12 +180,27 @@ PREDICTOR_COLS = [
     "transit_overnight_stop_count",
     "transit_overnight_stop_share",
     "transit_route_mode_diversity",
-    # risky-facility co-location (H1) + interaction (H3) — need the BigQuery POI point pull
-    # to populate (currently emit 0 offline). Promote once evaluated. See eda_plan.md.
-    # "transit_risky_stop_count",
-    # "transit_risky_stop_share",
-    # "transit_risky_allnight_count",
 ]
+
+PREDICTOR_COLS = [*DEMOGRAPHIC_PREDICTORS, *PROPERTY_PREDICTORS, *TRANSIT_PREDICTORS]
+
+# Functional form for transit predictors in modeling/EDA (see distribution EDA,
+# docs/features/transit_eda_plan.md §5). Single source of truth consumed by
+# feature_engineering.transforms.apply_transforms:
+#   "log1p"    → add a compressed `{col}_log` column (tames right-skewed counts/distance)
+#   "identity" → use the raw bounded column as-is (shares, diversity ∈ [0,1])
+# The structural zeros (stopless BGs) are split into a separate `transit_has_transit`
+# indicator (derived from transit_stop_count > 0), so "no transit" ≠ "little transit".
+# NOTE: Pearson corr/OLS see these forms directly; Spearman is transform-invariant.
+TRANSIT_MODEL_TRANSFORMS = {
+    "transit_stop_count":           "log1p",
+    "transit_stop_density":         "log1p",
+    "transit_nearest_stop_m":       "log1p",
+    "transit_service_intensity":    "log1p",
+    "transit_overnight_stop_count": "log1p",
+    "transit_overnight_stop_share": "identity",
+    "transit_route_mode_diversity": "identity",
+}
 
 ZERO_FILL = [
     "vacant_pct",
