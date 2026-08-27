@@ -275,6 +275,7 @@ CITIES = {
 # --- BigQuery projects / datasets ---
 BQ_PROJECT         = "clgx-gis-app-dev-06e3"        # billing + GIS/boundary + staging
 IDAP_PROJECT       = "clgx-idap-bigquery-prd-a990"  # enterprise property data
+IMAGERY_PROJECT    = "clgx-idap-iefd-app-prd-ec54"  # Vexcel aerial-features (edr_ent_property_aerial_features)
 BOUNDARY_DATASET   = "boundary"
 BQ_STAGING_DATASET = "work_eprashar"                # where feature build tables land
 

@@ -6,7 +6,7 @@ from google.cloud import bigquery
 
 from crime_blockgroup_mapping.constants import (
     GCS_PROJECT, GCS_ROOT, UCR_YEAR,
-    BQ_PROJECT, IDAP_PROJECT, BOUNDARY_DATASET, BQ_STAGING_DATASET,
+    BQ_PROJECT, IDAP_PROJECT, IMAGERY_PROJECT, BOUNDARY_DATASET, BQ_STAGING_DATASET,
 )
 from regression_modelling.config import SQL_DIR, source_parquet
 
@@ -34,6 +34,7 @@ def _bq_client() -> bigquery.Client:
 _SQL_DEFAULTS = {
     "bq_project":       BQ_PROJECT,
     "idap_project":     IDAP_PROJECT,
+    "imagery_project":  IMAGERY_PROJECT,
     "boundary_dataset": BOUNDARY_DATASET,
     "staging_dataset":  BQ_STAGING_DATASET,
 }
@@ -56,6 +57,18 @@ def run_bq_build_store(store: str) -> None:
     """
     from regression_modelling.constants import STORE_DEFS
     sql = load_sql("stores", "build", store=store, match_predicate=STORE_DEFS[store])
+    _bq_client().query(sql).result()
+
+
+def run_bq_build_imagery(fips_filter: str) -> None:
+    """Materialize the BG Vexcel imagery table via sql/build/imagery.sql.
+
+    `fips_filter` is a quoted, comma-separated county FIPS list scoping both the Vexcel
+    read and the xref (e.g. "'17031'" for Cook County, or "'17031','48201'"). NOTE: Vexcel
+    lives in a prd project; run this where those tables are reachable (BQ console), which
+    writes bg_imagery to the dev staging dataset that run_bq_pull can then read.
+    """
+    sql = load_sql("imagery", "build", fips_filter=fips_filter)
     _bq_client().query(sql).result()
 
 def run_bq_pull(name: str) -> pd.DataFrame:

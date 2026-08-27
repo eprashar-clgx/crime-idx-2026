@@ -9,6 +9,15 @@ def source_parquet(name: str):
     return INTERIM_DIR / "sources" / f"{name}.parquet"
 
 
+def bias_parquet(name: str = "protected_attributes"):
+    """Cache for the bias-testing-only protected-attribute table (data/interim/bias/).
+
+    Kept in a separate tier from `sources/` so protected attributes can never be swept
+    into the predictor matrix by construction (ADR 0004). Keyed by `geoid`.
+    """
+    return INTERIM_DIR / "bias" / f"{name}.parquet"
+
+
 def transit_raw_dir(city: str):
     """Immutable downloaded GTFS feed zips for a city (data/raw/transit/{city}/).
 

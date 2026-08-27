@@ -111,6 +111,24 @@ FEATURE_SOURCES = {
             "transit_route_mode_diversity",
         ),
     ),
+    # Imagery (Vexcel aerial structure features) — BG averages of per-structure roof/parcel
+    # condition, built by sql/build/imagery.sql (structure-level -> BG via the parcel xref).
+    # feature_cols are pulled into the matrix for EDA; they are NOT yet in PREDICTOR_COLS
+    # (see IMAGERY_PREDICTORS) — promote after 01_eda decides which carry signal.
+    "imagery": FeatureSource(
+        name="imagery",
+        backend="bq",
+        location="imagery",          # → sql/pull/imagery.sql
+        key_col="geoid",
+        feature_cols=(
+            "roof_condition_avg",
+            "roof_debris_pct_avg",
+            "roof_discoloration_pct_avg",
+            "hardscapes_pct_avg",
+            "roof_missing_material_pct",
+            "imagery_structure_count",
+        ),
+    ),
 }
 
 # Store universes for the generic block-group builder (sql/build/stores.sql).
@@ -153,6 +171,8 @@ DEMOGRAPHIC_PREDICTORS = [
     "det_pct",              # Percentage of housing units that are single family detached houses
     "in_household_pct",     # Percent of the population living in households
     "moved1yr_pct",         # Percentage of households moving in past year
+    "own_pct",              # Percentage of owner-occupied housing units
+    "lap_pct",              # Percentage of housing units in 5+ unit structures
     "city_centers_dist",    # Distance in miles from central business district of nearest city
     "pop_est_5mile",        # Population density within 5 miles
     "pop_ch_1mile",         # Population change within 1 mile
@@ -214,6 +234,19 @@ TRANSIT_MODEL_PREDICTORS = [
     "transit_service_intensity_logc",
     "transit_nearest_stop_m_log",
     "transit_overnight_stop_share",
+]
+
+# imagery (Vexcel aerial structure features) — BG averages of per-structure roof/parcel
+# condition. CANDIDATE predictors, deliberately NOT in PREDICTOR_COLS yet: pulled into the
+# feature matrix (FEATURE_SOURCES["imagery"]) for distribution EDA, promoted to the fit-set
+# only after 01_eda shows which columns carry signal. `imagery_structure_count` is a
+# coverage/EDA column (structures backing each BG average), not itself a candidate predictor.
+IMAGERY_PREDICTORS = [
+    "roof_condition_avg",           # avg Vexcel roof condition score
+    "roof_debris_pct_avg",          # avg roof debris %
+    "roof_discoloration_pct_avg",   # avg roof discoloration %
+    "hardscapes_pct_avg",           # avg parcel hardscape %
+    "roof_missing_material_pct",    # share of structures with missing roof material
 ]
 
 # Active fit-set: demographic + property (raw) + transit (model form). PREDICTOR_COLS is
