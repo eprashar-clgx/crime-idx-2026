@@ -81,6 +81,35 @@ def plot_distribution(df, crime_type='cl_total', suffix='count', block_groups='a
     plt.tight_layout()
     plt.show()
 
+def feature_summary(df, cols):
+    """Per-column describe + coverage/skew for a candidate feature set (Step-2 screening).
+
+    Unlike the inline `describe_cols`, this adds coverage columns so held-out candidates
+    (e.g. IMAGERY_PREDICTORS, not yet in PREDICTOR_COLS) can be judged on missingness before
+    promotion. `pct_missing` matters per-city: imagery is ~99% inside city but confirm it.
+    """
+    d = df[cols].describe(percentiles=[.01, .05, .25, .5, .75, .95, .99]).T
+    d["skew"] = df[cols].skew()
+    d["n_missing"] = df[cols].isna().sum()
+    d["pct_missing"] = (df[cols].isna().mean() * 100).round(1)
+    return d.round(2)
+
+
+def candidate_target_corr(df, cols, targets, suffix="rate", method="spearman"):
+    """Spearman/Pearson of candidate `cols` vs each `{target}_{suffix}` column.
+
+    Generalizes the notebook's `predictor_target_corr` (hardcoded to PREDICTOR_COLS) to any
+    column list — a directional signal-check for candidate predictors (imagery/new ACS)
+    before promoting them to PREDICTOR_COLS. `suffix="rate"` is the primary target per
+    ADR 0003; pass "logcount" for the comparator.
+    """
+    tcols = [f"{t}_{suffix}" for t in targets if f"{t}_{suffix}" in df.columns]
+    have = [c for c in cols if c in df.columns]
+    corr = df[have + tcols].corr(method=method).loc[have, tcols]
+    corr.columns = [t for t in targets if f"{t}_{suffix}" in df.columns]
+    return corr.round(2)
+
+
 def correlation_matrix(df, cols=None, method='pearson', drop_constant=True,
                        plot=True, title=None, annot=True, figsize=(9, 7.5), labels=None):
     """General predictor correlation matrix with a zero-variance guard.
