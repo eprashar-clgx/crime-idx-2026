@@ -89,3 +89,43 @@ Decisions locked in ADR 0003 (regression reframe), ADR 0004 (bias-testing), ADR 
 6. **Bias testing (ADR 0004)** — for significant predictors, report raw `corr(X, protected)`
    **and** conditional association; soft-flag for human review (keep-with-caveat / drop /
    investigate), never auto-drop.
+
+## Locked harness spec — Step 4 regression CV (grilled 2026-08-31)
+
+Refines ADR 0003 with the concrete evaluation protocol. No code yet at time of writing.
+
+- **Cities (5, full-coverage incl. violent+rape):** Houston, Chicago, Atlanta, Kansas City,
+  Detroit. The other 5 (SF, Pittsburgh, Columbus, Jacksonville, Sacramento) are
+  `property_only` and excluded here. All 5 model tables are built.
+- **Protocol — rotating leave-one-city-out (LOCO):** 4 train + 1 held-out, every city holds
+  out once (5 folds). No random k-fold (spatial + cross-city leakage). Standardization and
+  imputation are **fit on train cities only** and applied to the holdout (leakage-safe).
+  Drop zero/NaN-pop BGs before fitting (rate needs a denominator); spatial weights/Moran's I
+  run on the filtered geoid set.
+- **Targets (same design matrix X, swap y):**
+  - **(c) HEADLINE — within-city z-scored `crime_rate`** (each city by its own mean/sd): the
+    "risk index" form; learns *relative* within-city BG risk (city level+scale removed ≈
+    city fixed effects absorbed into the target). Evaluated with rank/concentration metrics
+    (affine-invariant → holdout city moments never needed).
+  - **(a) REPORTED — plain pooled raw `crime_rate`** (one intercept): absolute level. "Moving
+    c→a" is just swapping the target column + refitting; not a coefficient conversion.
+    Evaluated with absolute-error metrics.
+  - **comparator — `log(count+1)`.** Weighted rate **deferred** (skip the ADR 0005 promotion
+    for now; revisit when we add it).
+- **Held-out metrics:**
+  - **HEADLINE — Lorenz/concentration curve.** Sort holdout BGs by predicted risk desc;
+    Y = cumulative share of **actual crime count** captured; X = cumulative share, param
+    **`x_unit="population"` (default)** or **`"bg"`**. Population is the coherent default: the
+    model targets a *rate*, so the metric optimum (rank by rate) coincides with the target,
+    and the null (diagonal) = constant per-capita rate. BG-axis optimum is rank-by-count and
+    rewards finding populous BGs — report it only when the action is literally per-BG.
+    Summary stats: **capture@top-20%-pop**, concentration/Gini coefficient, oracle-normalized
+    skill (model-vs-sort-by-actual). **Reuses `carrier_eval.plots.plot_carrier_lorenz`**
+    (its `x_axis='exposure_weighted'|'equal_weight'` is exactly this param).
+  - **SECONDARY —** out-of-sample **R² / RMSE / MAE** (on (a)); **Spearman** rank corr.
+  - **Per-fold diagnostics —** coef table, HC3 SEs, residuals, Moran's I on the filtered set.
+- **Build gap (what "the harness" is):** primitives exist (`model.fit_ols` + diagnostics,
+  carrier Lorenz). Missing = pooled loader (concat 5 tables + `city` col + pop-drop),
+  train-only scaler, target-transform layer, held-out prediction, the **LOCO driver loop**,
+  out-of-sample metric helpers (R²/RMSE/MAE, Spearman, capture@k, oracle skill), per-fold
+  aggregation. Likely a new `models/cv.py`. Per-city `fit_and_report` stays as the baseline.
