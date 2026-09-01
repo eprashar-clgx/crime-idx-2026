@@ -334,6 +334,31 @@ def error_stats(df: pd.DataFrame, score_col: str = "y_pred",
     }
 
 
+def hotspot_metrics(df: pd.DataFrame, score_col: str = "y_pred",
+                    category: str = "cl_total", k: float = 0.20) -> dict:
+    """Classification-style ranking metrics for a scored frame.
+
+    The true hotspots are the top-`k` fraction of BGs by ACTUAL crime count; the model
+    flags the top-`k` by predicted score. Because both selections are the same size,
+    precision == recall (== the hit rate of the flagged list). `capture` is the share of
+    total crime COUNT that lands in the predicted top-`k` BGs.
+    """
+    n = len(df)
+    topn = max(1, int(round(k * n)))
+    score = df[score_col].to_numpy(dtype=float)
+    count = df[f"{category}_count"].to_numpy(dtype=float)
+    pred_top = np.argsort(-score)[:topn]
+    actual_top = np.argsort(-count)[:topn]
+    hits = np.intersect1d(pred_top, actual_top).size
+    prec = hits / topn
+    tag = f"{int(k * 100)}%bg"
+    return {
+        f"precision@{tag}": round(prec, 3),
+        f"recall@{tag}": round(prec, 3),
+        f"capture@{tag}": round(float(count[pred_top].sum() / count.sum()), 3),
+    }
+
+
 def loco_metrics(run: dict, x_unit: str = "population", capture_at: float = 0.20) -> pd.DataFrame:
     """Per-holdout-city + pooled metrics table for a LOCO run.
 
