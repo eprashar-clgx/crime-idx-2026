@@ -57,10 +57,15 @@ def build_model_table(city: str, refresh: bool = False,
     target = build_bg_crime(city, refresh=refresh)
     feats  = assemble_features(refresh=False)   # national BG predictor matrix
 
-    count_cols = [f"{c}_count" for c in TARGET_CATEGORIES]
-    rate_cols  = [f"{c}_rate"  for c in TARGET_CATEGORIES]
+    count_cols   = [f"{c}_count" for c in TARGET_CATEGORIES]
+    rate_cols    = [f"{c}_rate"  for c in TARGET_CATEGORIES]
+    # daytime-adjusted rate (per 1K of population + LODES jobs) kept alongside the plain
+    # population rate so the two denominators can be A/B-compared as modeling targets.
+    daytime_cols = [f"{c}_rate_daytime" for c in TARGET_CATEGORIES]
+    exposure_cols = ["daytime_pop", "c000"]
     keep = (["geoid", "within_city", "population"]
-            + [c for c in count_cols + rate_cols if c in target.columns])
+            + [c for c in count_cols + rate_cols + daytime_cols + exposure_cols
+               if c in target.columns])
 
     df = feats.merge(target[keep], on="geoid", how="inner")
     if inside_city_only:

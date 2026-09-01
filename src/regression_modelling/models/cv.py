@@ -46,6 +46,7 @@ def load_city_table(city: str, refresh: bool = False) -> pd.DataFrame:
 
 
 def load_pooled_table(cities: list[str] | None = None, drop_zero_pop: bool = True,
+                      daytime_pop_floor: float = 100.0,
                       refresh: bool = False) -> pd.DataFrame:
     """Concatenate the per-city model tables into one pooled BG frame for LOCO CV.
 
@@ -53,6 +54,12 @@ def load_pooled_table(cities: list[str] | None = None, drop_zero_pop: bool = Tru
     - Drops zero/NaN-population BGs when `drop_zero_pop` (the rate target needs a
       denominator; ADR 0003). The surviving `geoid` set is what spatial weights and the
       bias table must later align to.
+    - Applies a `daytime_pop_floor` (default 100): BGs whose daytime population
+      (residents + LODES jobs) is below the floor are small-denominator ARTIFACTS whose
+      rate is measurement noise (a few crimes over ~no people) — they manufacture the
+      skew that crushes the raw-rate OLS. Dropping them is the diagnosed target-
+      stabilization treatment; genuine hotspots (hundreds of crimes over a solid daytime
+      population) sit far above the floor and are preserved. Set 0 to disable.
 
     Prints per-city and pooled row counts so the fold sizes are visible.
     """
@@ -73,6 +80,13 @@ def load_pooled_table(cities: list[str] | None = None, drop_zero_pop: bool = Tru
         dropped = before - len(pooled)
         print(f"  dropped {dropped} zero/NaN-pop BGs -> {len(pooled)} remain "
               f"(filtered geoid set for fit + Moran's I + bias join)")
+
+    if daytime_pop_floor and "daytime_pop" in pooled.columns:
+        before = len(pooled)
+        pooled = pooled[pooled["daytime_pop"] >= daytime_pop_floor].copy()
+        dropped = before - len(pooled)
+        print(f"  dropped {dropped} BGs below daytime_pop {daytime_pop_floor:.0f} "
+              f"(small-denominator rate artifacts) -> {len(pooled)} remain")
 
     return pooled
 
@@ -96,29 +110,51 @@ def loco_folds(pooled: pd.DataFrame,
 # Three target forms share ONE design matrix; the scaler is fit on TRAIN cities
 # only and applied to the holdout, so no holdout information touches the fit.
 
-TARGET_MODES = ("rate_within_city", "rate", "logcount")
+TARGET_MODES = ("rate_within_city", "rate", "rate_daytime_within_city",
+                "rate_daytime", "logcount")
+
+_DAYTIME_MODES = {"rate_daytime", "rate_daytime_within_city"}
+
+
+def _rate_col(mode: str, category: str) -> str:
+    """The actual-rate column a mode is built on: daytime denominator (population +
+    LODES jobs) for the `*_daytime` modes, plain population rate otherwise."""
+    suffix = "_rate_daytime" if mode in _DAYTIME_MODES else "_rate"
+    return f"{category}{suffix}"
 
 
 def make_target(df: pd.DataFrame, mode: str = "rate_within_city",
-                category: str = "cl_total", city_col: str = "city") -> pd.Series:
+                category: str = "cl_total", city_col: str = "city",
+                winsor_upper: float | None = None) -> pd.Series:
     """Build the regression target `y` for a fit mode (Series aligned to `df.index`).
 
-    - ``rate_within_city`` — HEADLINE (c): per-city z-scored `{category}_rate`, each city
-      by ITS OWN mean/sd. Learns *relative* within-city BG risk (city level+scale removed).
-      Computed groupwise, so on a pooled TRAIN frame each city standardizes to itself and
-      no cross-city level leaks in.
-    - ``rate`` — REPORTED (a): raw `{category}_rate` (absolute level, one intercept).
+    - ``rate_within_city`` / ``rate_daytime_within_city`` — HEADLINE (c): per-city
+      z-scored rate (plain / daytime denominator), each city by ITS OWN mean/sd. Learns
+      *relative* within-city BG risk (city level+scale removed). Computed groupwise, so on
+      a pooled TRAIN frame each city standardizes to itself and no cross-city level leaks.
+    - ``rate`` / ``rate_daytime`` — REPORTED (a): raw rate (absolute level, one intercept).
+      ``rate_daytime`` = `{category}_rate_daytime` (per 1k of population + jobs) is the
+      preferred interpretable target — daytime denominator + the loader's daytime_pop floor
+      already tame the small-denominator skew.
     - ``logcount`` — comparator: `{category}_logcount` = log(count+1).
+
+    `winsor_upper`, when set, caps the actual rate at that absolute value BEFORE any
+    within-city standardization — a gentle top-tail winsorize for whatever the daytime
+    floor leaves behind. A fixed constant (not a data percentile) keeps it leakage-free.
     """
-    if mode == "rate":
-        return df[f"{category}_rate"]
     if mode == "logcount":
         return df[f"{category}_logcount"]
-    if mode == "rate_within_city":
-        g = df.groupby(city_col)[f"{category}_rate"]
+    if mode not in TARGET_MODES:
+        raise ValueError(f"unknown target mode {mode!r}; expected one of {TARGET_MODES}")
+
+    rate = df[_rate_col(mode, category)].astype(float)
+    if winsor_upper is not None:
+        rate = rate.clip(upper=winsor_upper)
+    if mode.endswith("_within_city"):
+        g = rate.groupby(df[city_col])
         sd = g.transform("std").replace(0, np.nan)
-        return (df[f"{category}_rate"] - g.transform("mean")) / sd
-    raise ValueError(f"unknown target mode {mode!r}; expected one of {TARGET_MODES}")
+        return (rate - g.transform("mean")) / sd
+    return rate
 
 
 def fit_scaler(train: pd.DataFrame, predictors=PREDICTOR_COLS) -> pd.Series:
@@ -139,14 +175,14 @@ def apply_scaler(df: pd.DataFrame, scaler, predictors=PREDICTOR_COLS) -> pd.Data
 
 def fit_fold(train: pd.DataFrame, mode: str = "rate_within_city",
              predictors=PREDICTOR_COLS, category: str = "cl_total",
-             robust: str = "HC3") -> dict:
+             robust: str = "HC3", winsor_upper: float | None = None) -> dict:
     """Fit a standardized OLS on ONE train fold. Scaler is fit on this train frame only.
 
     Returns a dict bundling the fitted model, its HC3-robust wrapper, the train scaler,
     and the metadata needed to score a holdout with `predict_fold`.
     """
     d = train.copy()
-    d["_y"] = make_target(d, mode, category)
+    d["_y"] = make_target(d, mode, category, winsor_upper=winsor_upper)
     d = d.dropna(subset=list(predictors) + ["_y"])
 
     scaler = fit_scaler(d, predictors)
@@ -186,7 +222,8 @@ def predict_fold(fit: dict, holdout: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
-             predictors=PREDICTOR_COLS, category: str = "cl_total") -> dict:
+             predictors=PREDICTOR_COLS, category: str = "cl_total",
+             winsor_upper: float | None = None) -> dict:
     """Run rotating LOCO for one target mode.
 
     Returns a dict:
@@ -196,10 +233,12 @@ def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
       - ``mode`` / ``category`` / ``predictors`` : run metadata.
     Prints per-fold train/holdout sizes so shrinkage (e.g. imagery NaN) stays visible.
     """
-    print(f"LOCO — target mode = {mode!r} ({category})")
+    print(f"LOCO — target mode = {mode!r} ({category})"
+          + (f", winsor@{winsor_upper:g}" if winsor_upper is not None else ""))
     fits, parts = {}, []
     for city, train, holdout in loco_folds(pooled):
-        fit = fit_fold(train, mode=mode, predictors=predictors, category=category)
+        fit = fit_fold(train, mode=mode, predictors=predictors, category=category,
+                       winsor_upper=winsor_upper)
         scored = predict_fold(fit, holdout).assign(holdout_city=city)
         fits[city] = fit
         parts.append(scored)
@@ -213,9 +252,10 @@ def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
 
 
 def run_all_modes(pooled: pd.DataFrame, predictors=PREDICTOR_COLS,
-                  category: str = "cl_total") -> dict[str, dict]:
+                  category: str = "cl_total", winsor_upper: float | None = None) -> dict[str, dict]:
     """Convenience: run LOCO for every target mode. Returns {mode: run_loco result}."""
-    return {mode: run_loco(pooled, mode=mode, predictors=predictors, category=category)
+    return {mode: run_loco(pooled, mode=mode, predictors=predictors, category=category,
+                           winsor_upper=winsor_upper)
             for mode in TARGET_MODES}
 
 
@@ -252,13 +292,18 @@ def concentration_stats(df: pd.DataFrame, score_col: str = "y_pred",
 
     x_unit="population" (default) weights the x-axis by BG population — the coherent
     choice for a per-capita rate index (the null diagonal = constant rate everywhere).
-    x_unit="bg" gives every BG equal x-weight (per-place framing). The `oracle` ranking
-    is `count/weight` (= rate under population, = count under bg), i.e. the best achievable
-    concentration; `skill` normalizes the model's Gini by the oracle's.
+    x_unit="daytime_pop" weights by population + LODES jobs (the coherent null for the
+    daytime-rate target). x_unit="bg" gives every BG equal x-weight (per-place framing).
+    The `oracle` ranking is `count/weight` (= rate under a population weight, = count under
+    bg), i.e. the best achievable concentration; `skill` normalizes the model's Gini by it.
     """
     outcome = df[f"{category}_count"].to_numpy(dtype=float)
-    weight = (df["population"].to_numpy(dtype=float) if x_unit == "population"
-              else np.ones(len(df)))
+    if x_unit == "population":
+        weight = df["population"].to_numpy(dtype=float)
+    elif x_unit == "daytime_pop":
+        weight = df["daytime_pop"].to_numpy(dtype=float)
+    else:
+        weight = np.ones(len(df))
     x, y = _lorenz_points(df[score_col].to_numpy(), outcome, weight)
     gini = _gini(x, y)
 
@@ -275,10 +320,10 @@ def concentration_stats(df: pd.DataFrame, score_col: str = "y_pred",
 
 
 def error_stats(df: pd.DataFrame, score_col: str = "y_pred",
-                category: str = "cl_total") -> dict:
-    """Out-of-sample R2 / RMSE / MAE. Meaningful only for the ABSOLUTE `rate` mode,
-    where `y_pred` and `{category}_rate` share units."""
-    y = df[f"{category}_rate"].to_numpy(dtype=float)
+                rate_col: str = "cl_total_rate") -> dict:
+    """Out-of-sample R2 / RMSE / MAE. Meaningful only for the ABSOLUTE rate modes
+    (`rate`, `rate_daytime`), where `y_pred` and the actual `rate_col` share units."""
+    y = df[rate_col].to_numpy(dtype=float)
     yhat = df[score_col].to_numpy(dtype=float)
     resid = y - yhat
     ss_tot = np.sum((y - y.mean()) ** 2)
@@ -292,18 +337,21 @@ def error_stats(df: pd.DataFrame, score_col: str = "y_pred",
 def loco_metrics(run: dict, x_unit: str = "population", capture_at: float = 0.20) -> pd.DataFrame:
     """Per-holdout-city + pooled metrics table for a LOCO run.
 
-    Concentration + Spearman for every mode; R2/RMSE/MAE added only for the `rate` mode.
+    Concentration + Spearman for every mode; R2/RMSE/MAE added only for the ABSOLUTE rate
+    modes (`rate`, `rate_daytime`). Spearman and the error stats compare against the actual
+    rate column matching the mode's denominator (daytime rate for the `*_daytime` modes).
     'POOLED' stacks all out-of-sample rows into one curve/score.
     """
     from scipy.stats import spearmanr
     scored, cat, mode = run["scored"], run["category"], run["mode"]
+    rate_col = _rate_col(mode, cat)
 
     def _row(name, g):
         d = {"holdout": name, "n": len(g)}
         d.update(concentration_stats(g, x_unit=x_unit, category=cat, capture_at=capture_at))
-        d["spearman"] = round(spearmanr(g["y_pred"], g[f"{cat}_rate"]).statistic, 3)
-        if mode == "rate":
-            d.update(error_stats(g, category=cat))
+        d["spearman"] = round(spearmanr(g["y_pred"], g[rate_col]).statistic, 3)
+        if mode in ("rate", "rate_daytime"):
+            d.update(error_stats(g, rate_col=rate_col))
         return d
 
     rows = [_row(city, g) for city, g in scored.groupby("holdout_city")]
