@@ -127,6 +127,37 @@ def spatial_moran(city: str, design_frame: pd.DataFrame, resid, k: int = 8):
     return mi
 
 
+def residual_spatial(city: str, geoids, resid, k: int = 8):
+    """Attach within-city BG geometry to residuals (by geoid) and compute Moran's I in one
+    geometry pass — so the residual MAP and the spatial-autocorrelation TEST share the load.
+
+    Returns (gdf, moran): `gdf` is a GeoDataFrame (EPSG:4326 geometry) carrying a `resid`
+    column for a choropleth; `moran` is the esda.Moran on KNN(k) centroid weights. A
+    significant positive Moran's I ⇒ residuals cluster in space ⇒ the (non-spatial) fit is
+    still missing structure ⇒ the case for a spatial variable / spatial-lag / error model.
+    """
+    from crime_blockgroup_mapping.constants import CITIES
+    from crime_blockgroup_mapping.boundaries import (
+        load_state_block_groups, label_bgs_within_city, load_city_boundary,
+    )
+    from libpysal.weights import KNN
+    from esda.moran import Moran
+
+    cfg = CITIES[city]
+    bg = load_state_block_groups(cfg)
+    bg = label_bgs_within_city(bg, load_city_boundary(cfg))
+    bg = bg[bg["within_city"]][["geoid", "geometry"]].copy()
+
+    r = pd.DataFrame({"geoid": np.asarray(geoids), "resid": np.asarray(resid, dtype=float)})
+    gdf = bg.merge(r, on="geoid", how="inner")
+
+    proj = gdf.to_crs(3857)                                   # metric CRS for honest centroids
+    coords = np.c_[proj.geometry.centroid.x, proj.geometry.centroid.y]
+    w = KNN.from_array(coords, k=k); w.transform = "r"
+    mi = Moran(gdf["resid"].to_numpy(), w)
+    return gdf, mi
+
+
 # --------------------------------------------------------------------- driver --
 def fit_and_report(df: pd.DataFrame, city: str, target: str = "cl_total_logcount",
                    predictors=PREDICTOR_COLS, spatial: bool = True):

@@ -405,9 +405,10 @@ def loco_metrics(run: dict, x_unit: str = "population", capture_at: float = 0.20
             # y_pred and the target share log-rate units -> compare against log1p(rate)
             gg = g.assign(_logactual=np.log1p(g[rate_col].astype(float)))
             d.update(error_stats(gg, rate_col="_logactual"))
-        # in-sample adjusted R2 of the fold's fit (the inferential model quality)
-        if name in fits:
-            d["adj_r2_in"] = round(float(fits[name]["result"].rsquared_adj), 3)
+        # in-sample adjusted R2 of the fold's fit (OLS folds only; GBM fits carry no R2)
+        f = fits.get(name)
+        if isinstance(f, dict) and "result" in f:
+            d["adj_r2_in"] = round(float(f["result"].rsquared_adj), 3)
         return d
 
     rows = [_row(city, g) for city, g in scored.groupby("holdout_city")]
