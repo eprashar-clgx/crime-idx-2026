@@ -16,7 +16,7 @@ from crime_blockgroup_mapping.rates import (
 )
 from crime_blockgroup_mapping.scores import compute_weighted_scores
 from regression_modelling.constants import (
-    TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL,
+    TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL, PROPERTY_MODEL_TRANSFORMS,
 )
 from regression_modelling.data_wrangling.features import assemble_features
 from regression_modelling.feature_engineering.transforms import apply_transforms
@@ -72,15 +72,22 @@ def build_model_table(city: str, refresh: bool = False,
     if inside_city_only:
         df = df[df["within_city"] == True].copy()
 
-    # explicit per-column imputation of RAW predictors (incl. raw transit transform inputs)
-    df[ZERO_FILL]   = df[ZERO_FILL].fillna(0)
-    df[MEDIAN_FILL] = df[MEDIAN_FILL].fillna(df[MEDIAN_FILL].median())
+    # explicit per-column imputation of RAW predictors (incl. raw transit/property transform
+    # inputs). Restricted to columns actually present so the spatial-lag columns stay dormant
+    # until the BQ ingestion adds them (config-over-hardcoding; mirrors the file-backed skip).
+    zero_fill = [c for c in ZERO_FILL if c in df.columns]
+    median_fill = [c for c in MEDIAN_FILL if c in df.columns]
+    df[zero_fill]   = df[zero_fill].fillna(0)
+    df[median_fill] = df[median_fill].fillna(df[median_fill].median())
 
     # derive transit model-form predictors from the imputed raw columns: hurdle form
     # (transit_has_transit + service_intensity log1p centered on the served mass) plus
     # log1p distance/supply. These are the transit entries of PREDICTOR_COLS.
     # See docs/features/transit_stats.md.
     df, _ = apply_transforms(df, hurdle=True)
+    # property model forms: log1p the distress shares + their spatial lags (no has_transit
+    # indicator / hurdle — those are transit-only). Missing lag inputs are skipped.
+    df, _ = apply_transforms(df, spec=PROPERTY_MODEL_TRANSFORMS, has_transit_from=None)
 
     # log(count + 1) targets (primary); *_rate kept as validators
     for c in count_cols:
@@ -96,7 +103,11 @@ def build_model_table(city: str, refresh: bool = False,
 
     out = PROCESSED_DIR / "regression_modelling" / f"{city}_model_table.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
-    df[PREDICTOR_COLS] = df[PREDICTOR_COLS].apply(pd.to_numeric, errors="coerce").astype("float64")
+    predictors = [c for c in PREDICTOR_COLS if c in df.columns]
+    missing = [c for c in PREDICTOR_COLS if c not in df.columns]
+    if missing:
+        print(f"  note: {len(missing)} predictor(s) not yet available (skipped): {missing}")
+    df[predictors] = df[predictors].apply(pd.to_numeric, errors="coerce").astype("float64")
     df.to_parquet(out)
     print(f"{city}: model table {df.shape} → {out.relative_to(PROCESSED_DIR.parent.parent)}")
     return df

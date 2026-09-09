@@ -168,7 +168,6 @@ TARGET_CATEGORIES = [
 # TRANSIT_PREDICTORS) without minting a per-purpose constant. PREDICTOR_COLS below is DERIVED
 # from these groups — it is the single active fit-set and cannot drift from its parts.
 DEMOGRAPHIC_PREDICTORS = [
-    "det_pct",              # Percentage of housing units that are single family detached houses
     "moved1yr_pct",         # Percentage of households moving in past year
     "own_pct",              # Percentage of owner-occupied housing units
     "lap_pct",              # Percentage of housing units in 5+ unit structures
@@ -176,6 +175,8 @@ DEMOGRAPHIC_PREDICTORS = [
     "pop_est_5mile",        # Population density within 5 miles
     "pop_ch_1mile",         # Population change within 1 mile
 ]
+# det_pct (single-family-detached share) removed: strongly collinear with own_pct / lap_pct
+# (the tenure/structure trio moved together), so it added variance-inflation without signal.
 
 PROPERTY_PREDICTORS = [
     "vacant_pct",
@@ -184,6 +185,45 @@ PROPERTY_PREDICTORS = [
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
+]
+
+# KNN(6) spatial-lag columns: the within-state 6-nearest-neighbour mean of the RAW pct
+# (self excluded), computed in BigQuery (data_wrangling/sql/build/{vacancy,liens,
+# foreclosures}.sql). They capture the surrounding neighbourhood's distress level so the
+# fit sees a transferable spatial gradient, not city-specific coordinates. Present only
+# after the BQ ingestion is re-run; the pipeline skips them until then.
+PROPERTY_LAG_COLS = [
+    "vacant_pct_lag6",
+    "clip_liens_pct_lag6",
+    "clip_foreclosure_pct_lag6",
+]
+
+# Functional form for property predictors in modeling/EDA. The three distress shares
+# (vacancy, liens, foreclosures) and their spatial lags are right-skewed → log1p into
+# `{col}_log`; the POI store counts stay raw. Consumed by apply_transforms (no has_transit
+# indicator / hurdle — those are transit-only).
+PROPERTY_MODEL_TRANSFORMS = {
+    "vacant_pct":                 "log1p",
+    "clip_liens_pct":             "log1p",
+    "clip_foreclosure_pct":       "log1p",
+    "vacant_pct_lag6":            "log1p",
+    "clip_liens_pct_lag6":        "log1p",
+    "clip_foreclosure_pct_lag6":  "log1p",
+}
+
+# Retained property predictors in model form (what actually enters PREDICTOR_COLS): the
+# log distress shares + raw store counts + the log spatial lags. Lag names follow the
+# apply_transforms `{col}_log` convention.
+PROPERTY_MODEL_PREDICTORS = [
+    "vacant_pct_log",
+    "clip_liens_pct_log",
+    "clip_foreclosure_pct_log",
+    "unq_convenience_stores_clips",
+    "unq_gas_stations_clips",
+    "unq_liquor_stores_clips",
+    "vacant_pct_lag6_log",
+    "clip_liens_pct_lag6_log",
+    "clip_foreclosure_pct_lag6_log",
 ]
 
 # transit (GTFS) — non-geo supply/exposure + overnight features, POC cities only.
@@ -243,21 +283,28 @@ TRANSIT_MODEL_PREDICTORS = [
 IMAGERY_PREDICTORS = [
     "roof_condition_avg",           # avg Vexcel roof condition score
     "roof_debris_pct_avg",          # avg roof debris %
-    "roof_discoloration_pct_avg",   # avg roof discoloration %
     "hardscapes_pct_avg",           # avg parcel hardscape %
     "roof_missing_material_pct",    # share of structures with missing roof material
 ]
+# roof_discoloration_pct_avg removed: strongly collinear with roof_condition_avg (both
+# proxy the same roof-degradation signal), so only roof_condition_avg is retained.
 
-# Active fit-set: demographic + property (raw) + transit (model form). PREDICTOR_COLS is
-# DERIVED so it cannot drift from its parts. The raw TRANSIT_PREDICTORS above are the
-# transform *inputs* (and imputation targets in ZERO_FILL/MEDIAN_FILL); they are replaced
-# here by the pruned TRANSIT_MODEL_PREDICTORS.
-PREDICTOR_COLS = [*DEMOGRAPHIC_PREDICTORS, *PROPERTY_PREDICTORS, *TRANSIT_MODEL_PREDICTORS, *IMAGERY_PREDICTORS]
+# Active fit-set: demographic + property (model form: log distress shares + spatial lags +
+# store counts) + transit (model form) + imagery. PREDICTOR_COLS is DERIVED so it cannot
+# drift from its parts. The raw PROPERTY_PREDICTORS / TRANSIT_PREDICTORS are the transform
+# *inputs* (and imputation targets in ZERO_FILL/MEDIAN_FILL); they are replaced here by the
+# model-form lists. Spatial-lag entries stay dormant until the BQ ingestion adds their raw
+# columns — the pipeline skips any predictor whose source column is absent.
+PREDICTOR_COLS = [*DEMOGRAPHIC_PREDICTORS, *PROPERTY_MODEL_PREDICTORS,
+                  *TRANSIT_MODEL_PREDICTORS, *IMAGERY_PREDICTORS]
 
 ZERO_FILL = [
     "vacant_pct",
     "clip_liens_pct",
     "clip_foreclosure_pct",
+    "vacant_pct_lag6",              # spatial lags: 0 = no distress in the neighbourhood
+    "clip_liens_pct_lag6",
+    "clip_foreclosure_pct_lag6",
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",

@@ -196,6 +196,7 @@ def fit_fold(train: pd.DataFrame, mode: str = "rate_within_city",
     and the metadata needed to score a holdout with `predict_fold`.
     """
     d = train.copy()
+    predictors = [p for p in predictors if p in d.columns]
     d["_y"] = make_target(d, mode, category, winsor_upper=winsor_upper)
     d = d.dropna(subset=list(predictors) + ["_y"])
 
