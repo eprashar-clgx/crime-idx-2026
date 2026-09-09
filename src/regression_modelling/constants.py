@@ -52,21 +52,21 @@ FEATURE_SOURCES = {
         backend="bq",
         location="vacancy",         # → sql/pull/vacancy.sql
         key_col="geoid",
-        feature_cols=("vacant_pct",),
+        feature_cols=("vacant_pct", "vacant_pct_lag6"),
     ),
     "liens": FeatureSource(
         name="liens",
         backend="bq",
         location="liens",          # → sql/pull/liens.sql
         key_col="geoid",
-        feature_cols=("clip_liens_pct",),
+        feature_cols=("clip_liens_pct", "clip_liens_pct_lag6"),
     ),
     "foreclosures": FeatureSource(
         name="foreclosures",
         backend="bq",
         location="foreclosures",     # → sql/pull/foreclosures.sql
         key_col="geoid",
-        feature_cols=("clip_foreclosure_pct",),
+        feature_cols=("clip_foreclosure_pct", "clip_foreclosure_pct_lag6"),
     ),
     "convenience_stores": FeatureSource(
         name="convenience_stores",

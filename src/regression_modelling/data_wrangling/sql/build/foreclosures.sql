@@ -23,9 +23,36 @@ bg_foreclosures AS (
   FROM `{bq_project}.{boundary_dataset}.NS_pcl_universe_xref` a
   LEFT JOIN clip_foreclosures b ON a.clip_list = CAST(b.puid AS STRING)
   GROUP BY 1
+),
+base AS (
+  SELECT a.*,
+         LEFT(a.census_block_group_geoid, 2) AS statefp,
+         c.geometry,
+         ST_CENTROID(c.geometry) AS centroid
+  FROM bg_foreclosures a
+  LEFT JOIN bg_geo c ON a.census_block_group_geoid = c.geoid
+),
+-- KNN(6) spatial lag: each BG's 6 nearest neighbours WITHIN THE SAME STATE (self excluded).
+-- The 25km ST_DWITHIN prefilter prunes the candidate set (enables BQ's spatial join
+-- optimization) while comfortably covering the 6 nearest neighbours in populated areas.
+neighbors AS (
+  SELECT b.census_block_group_geoid AS geoid,
+         n.clip_foreclosure_pct AS nbr_pct,
+         ROW_NUMBER() OVER (PARTITION BY b.census_block_group_geoid
+                            ORDER BY ST_DISTANCE(b.centroid, n.centroid)) AS rnk
+  FROM base b
+  JOIN base n
+    ON b.statefp = n.statefp
+   AND b.census_block_group_geoid != n.census_block_group_geoid
+   AND ST_DWITHIN(b.centroid, n.centroid, 25000)
+),
+lag AS (
+  SELECT geoid, AVG(nbr_pct) AS clip_foreclosure_pct_lag6
+  FROM neighbors
+  WHERE rnk <= 6
+  GROUP BY 1
 )
-SELECT a.*,
-       LEFT(a.census_block_group_geoid, 2) AS statefp,
-       c.geometry
-FROM bg_foreclosures a
-LEFT JOIN bg_geo c ON a.census_block_group_geoid = c.geoid
+SELECT b.* EXCEPT (centroid),
+       l.clip_foreclosure_pct_lag6
+FROM base b
+LEFT JOIN lag l ON b.census_block_group_geoid = l.geoid
