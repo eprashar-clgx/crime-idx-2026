@@ -14,6 +14,7 @@ from crime_blockgroup_mapping.crime import (
 from crime_blockgroup_mapping.rates import (
     load_model_data, merge_model_with_actuals, normalize_actuals, load_lodes_bg,
 )
+from crime_blockgroup_mapping.scores import compute_weighted_scores
 from regression_modelling.constants import (
     TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL,
 )
@@ -85,6 +86,13 @@ def build_model_table(city: str, refresh: bool = False,
     for c in count_cols:
         if c in df.columns:
             df[c.replace("_count", "_logcount")] = np.log1p(df[c])
+
+    # single modeling target: log of the weighted total rate (ADR 0003/0005). The weighted
+    # rate is a population-denominator construct (national *_pt_u benchmarks are per-resident),
+    # so it is built from the plain population *_rate columns, not the daytime variant.
+    df = compute_weighted_scores(df)                     # adds wtotal_rel/rate, wprop_rel/rate
+    df["wtotal_lograte"] = np.log1p(df["wtotal_rate"])
+    df["wprop_lograte"]  = np.log1p(df["wprop_rate"])
 
     out = PROCESSED_DIR / "regression_modelling" / f"{city}_model_table.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)

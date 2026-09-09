@@ -111,9 +111,10 @@ def loco_folds(pooled: pd.DataFrame,
 # only and applied to the holdout, so no holdout information touches the fit.
 
 TARGET_MODES = ("rate_within_city", "rate", "rate_daytime_within_city",
-                "rate_daytime", "logcount")
+                "rate_daytime", "logcount", "lograte", "lograte_within_city")
 
 _DAYTIME_MODES = {"rate_daytime", "rate_daytime_within_city"}
+_LOGRATE_MODES = {"lograte", "lograte_within_city"}
 
 
 def _rate_col(mode: str, category: str) -> str:
@@ -137,6 +138,13 @@ def make_target(df: pd.DataFrame, mode: str = "rate_within_city",
       preferred interpretable target — daytime denominator + the loader's daytime_pop floor
       already tame the small-denominator skew.
     - ``logcount`` — comparator: `{category}_logcount` = log(count+1).
+    - ``lograte`` — PRODUCT TARGET (pooled): `log1p({category}_rate)`, the absolute log
+      rate on one intercept. With `category="wtotal"` this is `log(weighted total rate)`,
+      the single headline modeling target (ADR 0003/0005). Winsorize acts on the rate
+      BEFORE the log, same as the rate modes.
+    - ``lograte_within_city`` — PRODUCT TARGET (LOCO within-city): the same log rate
+      z-scored per city (each city by its own mean/sd), so the fit learns *relative*
+      within-city risk with the cross-city level+scale removed.
 
     `winsor_upper`, when set, caps the actual rate at that absolute value BEFORE any
     within-city standardization — a gentle top-tail winsorize for whatever the daytime
@@ -147,14 +155,20 @@ def make_target(df: pd.DataFrame, mode: str = "rate_within_city",
     if mode not in TARGET_MODES:
         raise ValueError(f"unknown target mode {mode!r}; expected one of {TARGET_MODES}")
 
-    rate = df[_rate_col(mode, category)].astype(float)
-    if winsor_upper is not None:
-        rate = rate.clip(upper=winsor_upper)
+    if mode in _LOGRATE_MODES:
+        rate = df[f"{category}_rate"].astype(float)
+        if winsor_upper is not None:
+            rate = rate.clip(upper=winsor_upper)
+        val = np.log1p(rate)
+    else:
+        val = df[_rate_col(mode, category)].astype(float)
+        if winsor_upper is not None:
+            val = val.clip(upper=winsor_upper)
     if mode.endswith("_within_city"):
-        g = rate.groupby(df[city_col])
+        g = val.groupby(df[city_col])
         sd = g.transform("std").replace(0, np.nan)
-        return (rate - g.transform("mean")) / sd
-    return rate
+        return (val - g.transform("mean")) / sd
+    return val
 
 
 def fit_scaler(train: pd.DataFrame, predictors=PREDICTOR_COLS) -> pd.Series:
@@ -268,6 +282,14 @@ def run_all_modes(pooled: pd.DataFrame, predictors=PREDICTOR_COLS,
 # imports; consolidating both into the shared foundation is the ADR 0005 follow-up.
 
 
+def _outcome_col(df: pd.DataFrame, category: str) -> str:
+    """The crime-COUNT column a concentration/ranking metric captures. Weighted-rate
+    categories (`wtotal`, `wprop`) have no count of their own, so fall back to the
+    composite `cl_total_count` — the incidents actually being captured by the ranking."""
+    col = f"{category}_count"
+    return col if col in df.columns else "cl_total_count"
+
+
 def _lorenz_points(score, outcome, weight):
     """Cumulative (x, y) for a concentration curve, BGs sorted by `score` descending.
     x = cumulative share of `weight` (population or 1-per-BG); y = cumulative share of
@@ -297,7 +319,7 @@ def concentration_stats(df: pd.DataFrame, score_col: str = "y_pred",
     The `oracle` ranking is `count/weight` (= rate under a population weight, = count under
     bg), i.e. the best achievable concentration; `skill` normalizes the model's Gini by it.
     """
-    outcome = df[f"{category}_count"].to_numpy(dtype=float)
+    outcome = df[_outcome_col(df, category)].to_numpy(dtype=float)
     if x_unit == "population":
         weight = df["population"].to_numpy(dtype=float)
     elif x_unit == "daytime_pop":
@@ -346,7 +368,7 @@ def hotspot_metrics(df: pd.DataFrame, score_col: str = "y_pred",
     n = len(df)
     topn = max(1, int(round(k * n)))
     score = df[score_col].to_numpy(dtype=float)
-    count = df[f"{category}_count"].to_numpy(dtype=float)
+    count = df[_outcome_col(df, category)].to_numpy(dtype=float)
     pred_top = np.argsort(-score)[:topn]
     actual_top = np.argsort(-count)[:topn]
     hits = np.intersect1d(pred_top, actual_top).size
@@ -370,6 +392,7 @@ def loco_metrics(run: dict, x_unit: str = "population", capture_at: float = 0.20
     from scipy.stats import spearmanr
     scored, cat, mode = run["scored"], run["category"], run["mode"]
     rate_col = _rate_col(mode, cat)
+    fits = run.get("fits", {})
 
     def _row(name, g):
         d = {"holdout": name, "n": len(g)}
@@ -377,6 +400,13 @@ def loco_metrics(run: dict, x_unit: str = "population", capture_at: float = 0.20
         d["spearman"] = round(spearmanr(g["y_pred"], g[rate_col]).statistic, 3)
         if mode in ("rate", "rate_daytime"):
             d.update(error_stats(g, rate_col=rate_col))
+        elif mode == "lograte":
+            # y_pred and the target share log-rate units -> compare against log1p(rate)
+            gg = g.assign(_logactual=np.log1p(g[rate_col].astype(float)))
+            d.update(error_stats(gg, rate_col="_logactual"))
+        # in-sample adjusted R2 of the fold's fit (the inferential model quality)
+        if name in fits:
+            d["adj_r2_in"] = round(float(fits[name]["result"].rsquared_adj), 3)
         return d
 
     rows = [_row(city, g) for city, g in scored.groupby("holdout_city")]
@@ -395,7 +425,7 @@ def plot_lorenz(run: dict, x_unit: str = "population", category: str = None, ax=
         _, ax = plt.subplots(figsize=(6, 5))
 
     for city, g in scored.groupby("holdout_city"):
-        outcome = g[f"{cat}_count"].to_numpy(dtype=float)
+        outcome = g[_outcome_col(g, cat)].to_numpy(dtype=float)
         weight = (g["population"].to_numpy(dtype=float) if x_unit == "population"
                   else np.ones(len(g)))
         x, y = _lorenz_points(g["y_pred"].to_numpy(), outcome, weight)
