@@ -108,6 +108,24 @@ CRIME_CATEGORIES = [
     'violent', 'property', 'total', 'cl_total', 'wtotal', 'wprop'
 ]
 
+# National reference rates (per 1,000 RESIDENTS), the `*_pt_u` benchmarks used to turn a
+# BG's local per-crime rate into a unitless relative risk (local / national). Canonical
+# values from the carrier evals dataset, documented in docs/weightage_methodology.md §2.
+# Hardcoded here (not read from the evals parquet) so the weighted-score math is available
+# to BOTH tasks without regression_modelling depending on the carrier_eval evals artifact.
+# extract_national_rates (scores.py) can still re-derive these from an evals file when present.
+NATIONAL_PT_U_RATES = {
+    'murder_pt_u':   0.050,
+    'rape_pt_u':     0.375,
+    'robbery_pt_u':  0.606,
+    'assault_pt_u':  2.561,
+    'violent_pt_u':  3.591,
+    'burglary_pt_u': 2.292,
+    'larceny_pt_u':  12.721,
+    'mvt_pt_u':      2.588,
+    'property_pt_u': 17.601,
+}
+
 @dataclass
 class CityConfig:
     name: str

@@ -1,6 +1,6 @@
 # ADR 0005 — Promote weighted-score math into the shared foundation
 
-- **Status:** Accepted
+- **Status:** Implemented (2026-09)
 - **Date:** 2026-08-27
 - **Related:** ADR 0001 (task seam), ADR 0003 (weighted rate as a regression comparator),
   `docs/weightage_methodology.md`
