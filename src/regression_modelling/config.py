@@ -9,6 +9,21 @@ def source_parquet(name: str):
     return INTERIM_DIR / "sources" / f"{name}.parquet"
 
 
+def agency_parquet(name: str):
+    """Cache for agency-level (police-jurisdiction) artifacts (data/interim/agency/).
+
+    Task-1 agency comparison intermediates: the block-group -> agency crosswalk
+    (`bg_akey_crosswalk`) and our BG predictor set rolled up to agency level
+    (`agency_predictors`). Keyed by the UCR agency key `akey`.
+    """
+    return INTERIM_DIR / "agency" / f"{name}.parquet"
+
+
+def features_parquet(name: str = "bg_predictors"):
+    """Engineered BG predictor table (data/interim/features/{name}.parquet). Keyed by geoid."""
+    return INTERIM_DIR / "features" / f"{name}.parquet"
+
+
 def bias_parquet(name: str = "protected_attributes"):
     """Cache for the bias-testing-only protected-attribute table (data/interim/bias/).
 

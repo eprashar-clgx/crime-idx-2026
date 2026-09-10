@@ -117,6 +117,14 @@ reconstruction math** (`compute_weighted_scores`, `extract_national_rates`) now 
 - **imagery predictor** — a **structure-level** IDAP source (e.g. structure density,
   roof/condition) re-aggregated to BG `geoid` via the build/pull pattern (not a tract
   broadcast).
+- **predictor functional form / log-scaled predictor** — the modeled form of a raw
+  predictor, owned by the `*_MODEL_TRANSFORMS` specs in `regression_modelling.constants`
+  and applied by `feature_engineering.transforms.apply_transforms` (`{col}_log`). Rule:
+  **right-skewed magnitude counts/distances are log1p-compressed before the `log1p`-target
+  fit; only bounded shares/ratios stay raw.** `pop_est_5mile` (5-mile population ring,
+  ~46→2.3M) is log-scaled to **`pop_est_5mile_log`** — raw scale destabilised the fit
+  (`expm1` blow-up; agency adj R² 0.22→0.36), ADR 0006. Raw names persist for EDA/imputation
+  (`DEMOGRAPHIC_PREDICTORS`, `MEDIAN_FILL`); the model-form list feeds `PREDICTOR_COLS`.
 - **filtered geoid set** — the post-drop geoids the fit actually runs on. Spatial weights
   (Moran's I), CV folds, and the bias-testing join must all align to it, not the full
   boundary set (ADR 0003).

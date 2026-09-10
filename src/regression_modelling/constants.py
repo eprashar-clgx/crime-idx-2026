@@ -178,6 +178,27 @@ DEMOGRAPHIC_PREDICTORS = [
 # det_pct (single-family-detached share) removed: strongly collinear with own_pct / lap_pct
 # (the tenure/structure trio moved together), so it added variance-inflation without signal.
 
+# Functional form for demographic predictors in modeling. `pop_est_5mile` is a raw
+# population COUNT within a 5-mile ring, extremely right-skewed (~46 → 2.3M, skew ≈ 5.7).
+# Left raw it dominates the design matrix and — under the log1p target with a ridge/robust
+# fit — produces expm1 blow-ups on the largest-population units (in the 2026-09-10 agency
+# ablation a sparse model's held-out adj R² collapsed to −0.76 the moment raw pop_est_5mile
+# entered). log1p-compressing it into `pop_est_5mile_log` removes the instability and lifts
+# the standalone our-set adj R² from 0.22 → 0.36; the baseline national model log-scales the
+# same feature identically (`zlg10_pop_est_5mile`). See ADR 0006. `pop_ch_1mile` is a bounded
+# % change (−83 → +94) and stays raw. Consumed by apply_transforms (no has_transit / hurdle).
+DEMOGRAPHIC_MODEL_TRANSFORMS = {
+    "pop_est_5mile": "log1p",
+}
+
+# Demographic predictors in model form (what enters PREDICTOR_COLS): DEMOGRAPHIC_PREDICTORS
+# with the transformed columns renamed to the apply_transforms `{col}_log` convention.
+# DERIVED so it cannot drift from the raw list or the transform spec.
+DEMOGRAPHIC_MODEL_PREDICTORS = [
+    f"{c}_log" if c in DEMOGRAPHIC_MODEL_TRANSFORMS else c
+    for c in DEMOGRAPHIC_PREDICTORS
+]
+
 PROPERTY_PREDICTORS = [
     "vacant_pct",
     "clip_liens_pct",
@@ -289,13 +310,14 @@ IMAGERY_PREDICTORS = [
 # roof_discoloration_pct_avg removed: strongly collinear with roof_condition_avg (both
 # proxy the same roof-degradation signal), so only roof_condition_avg is retained.
 
-# Active fit-set: demographic + property (model form: log distress shares + spatial lags +
-# store counts) + transit (model form) + imagery. PREDICTOR_COLS is DERIVED so it cannot
-# drift from its parts. The raw PROPERTY_PREDICTORS / TRANSIT_PREDICTORS are the transform
-# *inputs* (and imputation targets in ZERO_FILL/MEDIAN_FILL); they are replaced here by the
-# model-form lists. Spatial-lag entries stay dormant until the BQ ingestion adds their raw
-# columns — the pipeline skips any predictor whose source column is absent.
-PREDICTOR_COLS = [*DEMOGRAPHIC_PREDICTORS, *PROPERTY_MODEL_PREDICTORS,
+# Active fit-set: demographic (model form: log1p population ring count) + property (model
+# form: log distress shares + spatial lags + store counts) + transit (model form) + imagery.
+# PREDICTOR_COLS is DERIVED so it cannot drift from its parts. The raw DEMOGRAPHIC_PREDICTORS
+# / PROPERTY_PREDICTORS / TRANSIT_PREDICTORS are the transform *inputs* (and imputation
+# targets in ZERO_FILL/MEDIAN_FILL); they are replaced here by the model-form lists. Spatial-
+# lag entries stay dormant until the BQ ingestion adds their raw columns — the pipeline skips
+# any predictor whose source column is absent.
+PREDICTOR_COLS = [*DEMOGRAPHIC_MODEL_PREDICTORS, *PROPERTY_MODEL_PREDICTORS,
                   *TRANSIT_MODEL_PREDICTORS, *IMAGERY_PREDICTORS]
 
 ZERO_FILL = [
