@@ -81,16 +81,29 @@ reconstruction math** (`compute_weighted_scores`, `extract_national_rates`) now 
   national `*_pt_u` rate), not raw sums. The math (`compute_weighted_scores`,
   `extract_national_rates`) lives in **`crime_blockgroup_mapping`** (shared), imported by
   both tasks (ADR 0005). See `docs/weightage_methodology.md`.
-- **prediction target** — primary is **`crime_rate` (per 1,000)**, OLS, zero/NaN-pop BGs
-  **dropped** before the fit (ADR 0003); `log(count + 1)` (`*_logcount`) and the weighted
-  rate are **comparators** in the same run. Predictors z-standardized at fit; report HC3
-  SEs; check Moran's I. (Supersedes the ADR-0001 `log(count+1)`-primary target.)
+- **prediction target** — primary is the **weighted (relative-risk) rate**, run in TWO
+  forms (ADR 0003 §Update 2026-09-10): **`log(weighted rate)`** (absolute level, one
+  intercept) and its **per-city z-score** (`*_within_city`, the within-city "risk index"
+  headline). Modeled for `wprop` (property composite, 10 cities) and `wtotal` (total, 5
+  cities); resident-pop denominator. `crime_rate` / `log(count+1)` are now comparators.
+  Zero/NaN-pop BGs **dropped** before the fit. Report HC3 SEs; check Moran's I.
+- **target-paired predictors** — pair the predictor treatment to the target (ADR 0003
+  §Update): **pooled/raw predictors** with the absolute `log`-rate target; **per-city
+  demeaned predictors** with the within-city z-score target (the within / fixed-effects
+  estimator). Demeaning uses each city's OWN observed predictors, so it survives test time
+  — unlike city dummies, which a held-out city has no intercept for. (`cv.fit_fold(...,
+  demean_by_city=True)`.)
 - **exposure** — population at risk. A big-population BG mechanically has more crimes.
   Handled by the **rate denominator** (`crime_rate = count/pop × 1000`), not a GLM offset —
   plain OLS on log-count has no offset, so log alone does **not** handle exposure (ADR 0003).
-- **grouped CV / leave-one-city-out** — the primary evaluation protocol: pool BGs across
-  cities, cross-validate with folds **held out by city**. Random k-fold is not used — it
-  leaks spatial autocorrelation across neighboring BGs (ADR 0003).
+- **grouped CV / leave-one-city-out (LOCO)** — the **extrapolation** protocol: pool BGs
+  across cities, cross-validate with folds **held out by city** ("predict an unseen city").
+  Random k-fold is not used — it leaks spatial autocorrelation across neighboring BGs
+  (ADR 0003). `cv.run_loco`.
+- **stratified 80/20 split** — the **interpolation** protocol: a random split stratified by
+  city (every city ~80/20), "predict unseen BGs in cities partly seen." Spatially leaky and
+  city-level-aware → **optimistic** R². The gap vs LOCO measures the value of having seen a
+  city before. `cv.run_holdout` (ADR 0003 §Update).
 - **per-city baseline** — the archived per-city OLS fit, kept runnable to inspect
   **cross-city coefficient heterogeneity** (does an effect differ Chicago vs Houston?). A
   documented baseline, not a headline output (ADR 0003).

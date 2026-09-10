@@ -187,21 +187,40 @@ def apply_scaler(df: pd.DataFrame, scaler, predictors=PREDICTOR_COLS) -> pd.Data
     return (df[predictors] - mu) / sd
 
 
+def _demean_predictors(df: pd.DataFrame, predictors, city_col: str = "city") -> pd.DataFrame:
+    """Subtract each row's OWN city mean from every predictor (the within transform).
+
+    Target-paired usage (see make_target / ADR 0003): pair this with the within-city
+    z-score target so both sides of the regression are per-city demeaned — the textbook
+    "within"/fixed-effects estimator via Frisch-Waugh, but implemented so it survives test
+    time. Crucially this is LEAKAGE-SAFE even for a held-out city: it uses the city's own
+    OBSERVED predictors (X is not the outcome), so at LOCO predict time the held-out city
+    is demeaned by its own X-means — no city dummy is needed and no outcome information
+    leaks. Cities absent from `df` simply demean against whatever rows are present.
+    """
+    block = df[list(predictors)]
+    return block - block.groupby(df[city_col].to_numpy()).transform("mean")
+
+
 def fit_fold(train: pd.DataFrame, mode: str = "rate_within_city",
              predictors=PREDICTOR_COLS, category: str = "cl_total",
-             robust: str = "HC3", winsor_upper: float | None = None) -> dict:
+             robust: str = "HC3", winsor_upper: float | None = None,
+             demean_by_city: bool = False, city_col: str = "city") -> dict:
     """Fit a standardized OLS on ONE train fold. Scaler is fit on this train frame only.
 
-    Returns a dict bundling the fitted model, its HC3-robust wrapper, the train scaler,
-    and the metadata needed to score a holdout with `predict_fold`.
+    When ``demean_by_city`` is True the predictors are per-city demeaned BEFORE scaling
+    (the within estimator — pair with a ``*_within_city`` target; see `_demean_predictors`).
+    Returns a dict bundling the fitted model, its HC3-robust wrapper, the train scaler, and
+    the metadata (incl. ``demean_by_city``/``city_col``) needed to score a holdout.
     """
     d = train.copy()
     predictors = [p for p in predictors if p in d.columns]
     d["_y"] = make_target(d, mode, category, winsor_upper=winsor_upper)
     d = d.dropna(subset=list(predictors) + ["_y"])
 
-    scaler = fit_scaler(d, predictors)
-    X = sm.add_constant(apply_scaler(d, scaler, predictors), has_constant="add")
+    block = _demean_predictors(d, predictors, city_col) if demean_by_city else d[predictors]
+    scaler = (block.mean(), block.std(ddof=0).replace(0, 1.0))
+    X = sm.add_constant((block - scaler[0]) / scaler[1], has_constant="add")
     result = sm.OLS(d["_y"].to_numpy(), X).fit()
     robust_res = result.get_robustcov_results(cov_type=robust)
 
@@ -209,6 +228,7 @@ def fit_fold(train: pd.DataFrame, mode: str = "rate_within_city",
         "result": result, "robust": robust_res, "scaler": scaler,
         "predictors": list(predictors), "mode": mode, "category": category,
         "n_train": int(result.nobs),
+        "demean_by_city": demean_by_city, "city_col": city_col,
     }
 
 
@@ -217,13 +237,16 @@ def predict_fold(fit: dict, holdout: pd.DataFrame) -> pd.DataFrame:
     non-null) with an added `y_pred` risk-score column.
 
     The holdout predictors are standardized with the TRAIN scaler (never re-fit), so the
-    prediction uses no holdout information. `y_pred` is a *relative risk score* in the
-    headline (within-city) mode — ranking is what the concentration metric consumes, so it
-    is not un-standardized.
+    prediction uses no holdout information. When the fit was ``demean_by_city``, the holdout
+    is first demeaned by ITS OWN city means (leakage-safe; see `_demean_predictors`), then
+    scaled. `y_pred` is a *relative risk score* in the within-city modes — ranking is what
+    the concentration metric consumes, so it is not un-standardized.
     """
     d = holdout.dropna(subset=fit["predictors"]).copy()
-    X = sm.add_constant(apply_scaler(d, fit["scaler"], fit["predictors"]),
-                        has_constant="add")
+    block = (_demean_predictors(d, fit["predictors"], fit.get("city_col", "city"))
+             if fit.get("demean_by_city") else d[fit["predictors"]])
+    mu, sd = fit["scaler"]
+    X = sm.add_constant((block - mu) / sd, has_constant="add")
     d["y_pred"] = np.asarray(fit["result"].predict(X))
     return d
 
@@ -238,22 +261,25 @@ def predict_fold(fit: dict, holdout: pd.DataFrame) -> pd.DataFrame:
 
 def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
              predictors=PREDICTOR_COLS, category: str = "cl_total",
-             winsor_upper: float | None = None) -> dict:
+             winsor_upper: float | None = None,
+             demean_by_city: bool = False) -> dict:
     """Run rotating LOCO for one target mode.
 
     Returns a dict:
       - ``scored``  : DataFrame of ALL holdout rows with a `y_pred` risk score and a
                       `holdout_city` tag — every BG scored while its city was held out.
       - ``fits``    : {city: fit-dict from `fit_fold`} for per-fold coefficient inspection.
-      - ``mode`` / ``category`` / ``predictors`` : run metadata.
-    Prints per-fold train/holdout sizes so shrinkage (e.g. imagery NaN) stays visible.
+      - ``mode`` / ``category`` / ``predictors`` / ``split`` : run metadata.
+    Pass ``demean_by_city=True`` to pair per-city demeaned predictors with a within-city
+    target (the within estimator). Prints per-fold train/holdout sizes.
     """
     print(f"LOCO — target mode = {mode!r} ({category})"
+          + (", demeaned-X" if demean_by_city else "")
           + (f", winsor@{winsor_upper:g}" if winsor_upper is not None else ""))
     fits, parts = {}, []
     for city, train, holdout in loco_folds(pooled):
         fit = fit_fold(train, mode=mode, predictors=predictors, category=category,
-                       winsor_upper=winsor_upper)
+                       winsor_upper=winsor_upper, demean_by_city=demean_by_city)
         scored = predict_fold(fit, holdout).assign(holdout_city=city)
         fits[city] = fit
         parts.append(scored)
@@ -262,7 +288,7 @@ def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
 
     scored = pd.concat(parts, ignore_index=True)
     print(f"  -> {len(scored)} BGs scored out-of-sample across {len(fits)} folds")
-    return {"scored": scored, "fits": fits, "mode": mode,
+    return {"scored": scored, "fits": fits, "mode": mode, "split": "loco",
             "category": category, "predictors": list(predictors)}
 
 
@@ -272,6 +298,55 @@ def run_all_modes(pooled: pd.DataFrame, predictors=PREDICTOR_COLS,
     return {mode: run_loco(pooled, mode=mode, predictors=predictors, category=category,
                            winsor_upper=winsor_upper)
             for mode in TARGET_MODES}
+
+
+# =========================================================================== #
+# Component 3b — stratified 80/20 holdout driver                              #
+# =========================================================================== #
+# A single random split, stratified by city (every city contributes ~80% train
+# / 20% test). This is the INTERPOLATION protocol: "predict unseen BGs in cities
+# we have partly seen." It leaks spatially (a BG's neighbour can sit across the
+# split) and knows each city's level, so its R2 is OPTIMISTIC — the gap between
+# it and LOCO (extrapolation) is exactly the value of having seen a city before.
+
+
+def stratified_split(pooled: pd.DataFrame, test_size: float = 0.20, seed: int = 0,
+                     city_col: str = "city") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Random train/test split stratified by city (each city split ~(1-test_size)/test_size).
+
+    Returns (train, test). The split is on rows only; the scaler + any per-city demean are
+    still fit on TRAIN inside `fit_fold`, so it stays leakage-safe on the fit side.
+    """
+    test = pooled.groupby(city_col, group_keys=False).sample(frac=test_size, random_state=seed)
+    train = pooled.drop(test.index)
+    print(f"  stratified {int((1-test_size)*100)}/{int(test_size*100)} split "
+          f"-> train={len(train)} test={len(test)} across "
+          f"{pooled[city_col].nunique()} cities (seed={seed})")
+    return train, test
+
+
+def run_holdout(pooled: pd.DataFrame, mode: str = "lograte",
+                predictors=PREDICTOR_COLS, category: str = "cl_total",
+                test_size: float = 0.20, seed: int = 0,
+                winsor_upper: float | None = None,
+                demean_by_city: bool = False) -> dict:
+    """Fit on a stratified TRAIN split, score the held-out TEST rows. Mirrors `run_loco`'s
+    return schema (``scored`` tagged with `holdout_city` = each row's own city, plus a
+    single ``fit``) so `loco_metrics` / `plot_lorenz` work unchanged. ``fits`` is left empty
+    so no per-city in-sample adj-R2 is attached; read `fit['result'].rsquared_adj` for the
+    pooled in-sample number.
+    """
+    print(f"HOLDOUT — target mode = {mode!r} ({category})"
+          + (", demeaned-X" if demean_by_city else "")
+          + (f", winsor@{winsor_upper:g}" if winsor_upper is not None else ""))
+    train, test = stratified_split(pooled, test_size=test_size, seed=seed)
+    fit = fit_fold(train, mode=mode, predictors=predictors, category=category,
+                   winsor_upper=winsor_upper, demean_by_city=demean_by_city)
+    scored = predict_fold(fit, test).assign(holdout_city=lambda d: d["city"])
+    print(f"  n_train={fit['n_train']:>5} scored={len(scored):>5}"
+          f" adjR2_in={fit['result'].rsquared_adj:6.3f}")
+    return {"scored": scored, "fit": fit, "fits": {}, "mode": mode, "split": "holdout",
+            "category": category, "predictors": list(predictors)}
 
 
 # =========================================================================== #
@@ -285,9 +360,11 @@ def run_all_modes(pooled: pd.DataFrame, predictors=PREDICTOR_COLS,
 
 def _outcome_col(df: pd.DataFrame, category: str) -> str:
     """The crime-COUNT column a concentration/ranking metric captures. Weighted-rate
-    categories (`wtotal`, `wprop`) have no count of their own, so fall back to the
-    composite `cl_total_count` — the incidents actually being captured by the ranking."""
-    col = f"{category}_count"
+    categories carry no count of their own, so map to the composite they represent:
+    `wprop` -> `property_count` (burglary+larceny+mvt), `wtotal` -> `cl_total_count`.
+    Anything else uses `{category}_count`, falling back to `cl_total_count`."""
+    weighted = {"wprop": "property_count", "wtotal": "cl_total_count"}
+    col = weighted.get(category, f"{category}_count")
     return col if col in df.columns else "cl_total_count"
 
 

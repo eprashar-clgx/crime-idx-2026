@@ -103,15 +103,21 @@ Refines ADR 0003 with the concrete evaluation protocol. No code yet at time of w
   Drop zero/NaN-pop BGs before fitting (rate needs a denominator); spatial weights/Moran's I
   run on the filtered geoid set.
 - **Targets (same design matrix X, swap y):**
-  - **(c) HEADLINE — within-city z-scored `crime_rate`** (each city by its own mean/sd): the
-    "risk index" form; learns *relative* within-city BG risk (city level+scale removed ≈
-    city fixed effects absorbed into the target). Evaluated with rank/concentration metrics
-    (affine-invariant → holdout city moments never needed).
-  - **(a) REPORTED — plain pooled raw `crime_rate`** (one intercept): absolute level. "Moving
-    c→a" is just swapping the target column + refitting; not a coefficient conversion.
-    Evaluated with absolute-error metrics.
-  - **comparator — `log(count+1)`.** Weighted rate **deferred** (skip the ADR 0005 promotion
-    for now; revisit when we add it).
+  - **(c) HEADLINE — within-city z-scored weighted rate** (`lograte_within_city`, each city
+    by its own mean/sd): the "risk index" form; learns *relative* within-city BG risk (city
+    level+scale removed). **Paired with per-city DEMEANED predictors** (the within /
+    fixed-effects estimator — see ADR 0003 §Update 2026-09-10), which survives test time
+    because a held-out city is demeaned by its own observed X, not a learned dummy.
+    Evaluated with rank/concentration metrics (affine-invariant → holdout city moments never
+    needed); within-city R²/MAE additionally reported under the 80/20 split only.
+  - **(a) REPORTED — pooled `log(weighted rate)`** (`lograte`, one intercept): absolute
+    level, **paired with pooled/raw predictors**. Evaluated with absolute-error metrics
+    (R²/MAE/Spearman). Its LOCO absolute error is expected to be poor — a held-out city's
+    level does not transfer, which is a finding, not a bug.
+  - **weighted target is now PRIMARY** (ADR 0005 promoted; resident-pop denominator). Run for
+    `wprop` over 10 POC cities and `wtotal` over the 5 full-coverage cities.
+  - **two protocols:** stratified 80/20 (interpolation, optimistic) **and** LOCO
+    (extrapolation, honest); the gap between them is itself a reported result.
 - **Held-out metrics:**
   - **HEADLINE — Lorenz/concentration curve.** Sort holdout BGs by predicted risk desc;
     Y = cumulative share of **actual crime count** captured; X = cumulative share, param
