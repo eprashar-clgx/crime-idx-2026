@@ -128,3 +128,16 @@ reconstruction math** (`compute_weighted_scores`, `extract_national_rates`) now 
 - **filtered geoid set** — the post-drop geoids the fit actually runs on. Spatial weights
   (Moran's I), CV folds, and the bias-testing join must all align to it, not the full
   boundary set (ADR 0003).
+- **`total_pt_ct`** — the **existing (agency-scale) model's** per-BG predicted weighted
+  *current* total crime rate (`ct` = "current", **not** census tract). Present per-BG in
+  `data/interim/bg_crime/{city}.parquet` (all categories carry a `*_pt_ct`); the national
+  source is `gs://…/ns4/2025q4/block_group_data.sav` keyed by `bg_key`. This is the
+  agency-scale prediction we **benchmark against** in the scale-case (`04_bg_comparison`).
+  It varies within-city (it is agency-*trained* but BG-*scored*, not a flat agency broadcast).
+- **between-city vs within-city skill (scale case)** — the diagnostic motivating the
+  city-incident BG target: the agency-scale model tracks crime **level between cities**
+  (correct city-mean ordering) but fits **within-city magnitude** weakly (near-zero
+  city-demeaned Pearson, only moderate within-city rank). Measured by decomposing
+  `total_pt_ct` ↔ observed weighted relative-risk rate into a between-city (city-mean) vs
+  within-city (city-demeaned) component. Part 1 of the two-part rebuild case (predictors =
+  `03_agency_comparison`; target/scale = `04_bg_comparison`). Pending ADR 0007.
