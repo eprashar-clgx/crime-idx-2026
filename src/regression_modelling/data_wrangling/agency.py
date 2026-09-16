@@ -191,6 +191,16 @@ def load_transit_proxies(refresh: bool = False) -> pd.DataFrame:
     (``muni_acs.sav``), collapsing muni keys to agencies via the UCR crosswalk with
     population weighting. Returns a frame indexed by ``akey`` with columns
     ``[bus_pct, train_pct]``; caches to data/interim/agency.
+
+    Coverage note: ``muni_acs`` stores county-level ACS under a 5-char ``SSCCC`` key,
+    but the UCR crosswalk keys **balance-of-county** agencies as ``SS99CCC`` (the "99"
+    placeholder). A naive ``muni_key`` join therefore misses ~3,100 large
+    unincorporated-county agencies (34% of population) — they get no ACS record and
+    silently drop from the modeling set. We remap those ``SS99CCC`` keys to the 5-char
+    county key so they match muni_acs's county rows (recovering ~99.5% coverage),
+    mirroring the county fallback in :func:`build_bg_akey_crosswalk` and the colleague's
+    baseline-predictor assembly. County-wide ACS slightly over-covers the unincorporated
+    balance, but it is the same approximation the baseline uses and far better than NaN.
     """
     path = agency_parquet("agency_transit_proxies")
     if path.exists() and not refresh:
@@ -207,12 +217,19 @@ def load_transit_proxies(refresh: bool = False) -> pd.DataFrame:
     pop_col = "population_acs" if "population_acs" in muni_acs.columns else None
 
     crosswalk, _ = read_sav_from_gcs(f"{GCS_ROOT}/crime/{year}/ucr_crosswalk.sav", fs)
-    muni_agency = (
-        crosswalk[crosswalk["popest_geo"] > 0]
-        .groupby("muni_key")["akey"].first()
-    )
+    cw = crosswalk[crosswalk["popest_geo"] > 0][["muni_key", "akey"]].copy()
+    cw["muni_key"] = cw["muni_key"].astype(str)
+    # ACS join key: remap balance-of-county agency keys (SS99CCC) to the 5-char county
+    # key (SSCCC) muni_acs actually stores; place/cousub keys pass through unchanged.
+    is_county99 = (cw["muni_key"].str.len() == 7) & (cw["muni_key"].str[2:4] == "99")
+    cw["acs_key"] = cw["muni_key"].where(
+        ~is_county99, cw["muni_key"].str[:2] + cw["muni_key"].str[4:])
+    muni_agency = cw.groupby("acs_key")["akey"].first()
+
     df = muni_acs[[key, "bus_pct", "train_pct"] + ([pop_col] if pop_col else [])].copy()
-    df = df.rename(columns={key: "muni_key"}).join(muni_agency, on="muni_key")
+    df = df.rename(columns={key: "acs_key"})
+    df["acs_key"] = df["acs_key"].astype(str)
+    df = df.join(muni_agency, on="acs_key")
     df = df[df["akey"].notna()]
     if pop_col:
         df = df.rename(columns={pop_col: "_w"})
