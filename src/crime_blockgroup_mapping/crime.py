@@ -21,7 +21,7 @@ def load_crime_data(cfg: CityConfig, csv_path: str = None, year_filter=_USE_CONF
     """
     path = DATA_DIR / (csv_path or cfg.crime_csv)
     if path.suffix.lower() in ('.xlsx', '.xls'):
-        df = pd.read_excel(path, dtype=str)
+        df = pd.read_excel(path, dtype=str, sheet_name=cfg.sheet_name)
     else:
         df = pd.read_csv(path, on_bad_lines='skip', engine='python')
     df.columns = df.columns.str.lower().str.replace(' ', '_')

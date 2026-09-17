@@ -142,6 +142,7 @@ class CityConfig:
     wkt_col: str = ""                                    # single WKT geometry col (e.g. 'POINT (lon lat)'); overrides lat/lon
     dedup_keys: tuple = ()                               # collapse multi-row-per-incident sources to one row per offense
     property_only: bool = False                          # True when the source suppresses violent/sex-crime coords (use property targets only)
+    sheet_name: object = 0                               # XLSX sheet to read (name or index); default first sheet
 
     @property
     def bg_zip(self) -> Path:
@@ -230,6 +231,7 @@ CITIES = {
         crime_type_mapping=NIBRS_TO_CATEGORY,
         date_col="reporteddate",
         property_only=True,
+        sheet_name="AllMergedTables",   # Sheet1/Sheet2 are pivot summaries; incidents live here
     ),
     # Kansas City, MO. KCPD Socrata export (dmnp-9ajg). One row per person-involvement
     # (VIC/SUS/ARR), so rows are collapsed to one per (report_no, ibrs) offense. Coordinates
