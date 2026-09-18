@@ -110,7 +110,9 @@ def _run_gbm(pool, mode, predictors, category, training):
             "category": category, "predictors": list(predictors)}
 
 
-def _run_one(spec: ExperimentSpec, pool: pd.DataFrame, category: str) -> dict:
+def run_spec(spec: ExperimentSpec, pool: pd.DataFrame, category: str) -> dict:
+    """Materialize and run one spec against one target's pool. Public entry point used both
+    by ``run_grid`` and by notebooks that compose focused, single-axis comparisons."""
     preds = resolve_predictors(spec, category, pool)
     mode, demean = TRANSFORM_SPECS[spec.transform]
     if spec.model in ("ridge", "ols"):
@@ -138,7 +140,7 @@ def _within_r2_pooled(run: dict) -> float:
     return round(float(np.mean(r2s)), 3) if r2s else float("nan")
 
 
-def _between_city_level_r(run: dict) -> float:
+def between_city_level_r(run: dict) -> float:
     """Between-city Pearson of city MEANS (predicted vs observed log-rate) — the cross-city
     LEVEL skill an absolute model must have. Pooled BG r2_oos is dominated by within-city
     scatter (~95% of variance), so this isolates the leveller's actual job."""
@@ -165,7 +167,7 @@ def _metrics_row(spec: ExperimentSpec, run: dict, category: str) -> dict:
         row["within_R2"] = _within_r2_pooled(run)
     else:  # absolute → the between-city LEVEL metrics (r2_oos over all BGs + city-mean level_r)
         row["r2_oos"] = m.get("r2_oos")
-        row["level_r"] = _between_city_level_r(run)
+        row["level_r"] = between_city_level_r(run)
     return row
 
 
@@ -180,7 +182,7 @@ def run_grid(specs: list[ExperimentSpec], pools: dict[str, pd.DataFrame]) -> pd.
     for spec in specs:
         for category, pool in pools.items():
             print(f"\n▶ {category} · {spec.label()}")
-            rows.append(_metrics_row(spec, _run_one(spec, pool, category), category))
+            rows.append(_metrics_row(spec, run_spec(spec, pool, category), category))
     axis_cols = ["category", "predictor_set", "transform", "transit", "training", "model"]
     df = pd.DataFrame(rows)
     metric_cols = [c for c in df.columns if c not in axis_cols]
