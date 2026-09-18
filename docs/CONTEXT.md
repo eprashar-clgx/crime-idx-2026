@@ -140,4 +140,7 @@ reconstruction math** (`compute_weighted_scores`, `extract_national_rates`) now 
   city-demeaned Pearson, only moderate within-city rank). Measured by decomposing
   `total_pt_ct` ↔ observed weighted relative-risk rate into a between-city (city-mean) vs
   within-city (city-demeaned) component. Part 1 of the two-part rebuild case (predictors =
-  `03_agency_comparison`; target/scale = `04_bg_comparison`). Pending ADR 0007.
+  `03_agency_comparison`; target/scale = `04_bg_comparison`). Settled in ADR 0007,
+  which also records the **rejected structural cross-city leveler** (C′, unlearnable from
+  5–10 cities) and the chosen **observed lagged-agency anchor** (Model D) for restoring
+  between-city level.
