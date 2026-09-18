@@ -114,6 +114,74 @@ def _load_history_panel(fs) -> pd.DataFrame:
     return merged
 
 
+def _weighted_level_panel(target_year: int, prior_fallback: bool) -> pd.DataFrame:
+    """Per-city severity-weighted agency crime level for ``target_year`` on the BG-target scale.
+
+    Shared core for both the lagged anchor and the contemporaneous validation level.
+
+    Parameters
+    ----------
+    target_year : the year whose reported offenses become the crime level.
+    prior_fallback : if the agency did not report ``target_year`` exactly, use its most
+        recent year strictly before ``UCR_YEAR`` (anchor behaviour). When ``False`` the
+        city is skipped for that year (validation behaviour — no year is invented).
+
+    Returns
+    -------
+    DataFrame indexed by ``city`` with ``[name, akey, year_used, population, pop_source,
+    wtotal_rate, wprop_rate]``.
+    """
+    fs = get_gcs_fs()
+    hist = _load_history_panel(fs)
+    hist = hist[hist["year"] < UCR_YEAR].copy() if prior_fallback else hist
+    xwalk = resolve_city_akey()
+    pop_est = _agency_pop_estimates()
+    count_cols = PRIMARY_CRIMES  # murder, rape, robbery, assault, burglary, larceny, mvt
+
+    records = []
+    for r in xwalk.itertuples(index=False):
+        panel = hist[hist["akey"] == r.akey]
+        row = panel[panel["year"] == target_year]
+        if row.empty:
+            if not prior_fallback:
+                continue  # validation: do not invent a year for a non-reporting agency
+            if panel.empty:
+                raise KeyError(f"{r.city}: agency {r.akey} has no rows in ucr_history < {UCR_YEAR}")
+            row = panel.sort_values("year").iloc[[-1]]  # most recent prior year
+        row = row.iloc[0]
+
+        pop = row.get("Population")
+        pop_source = "reported"
+        if pop is None or pd.isna(pop) or pop <= 0:
+            pop, pop_source = pop_est.get(r.akey), "popest_geo"
+        if pop is None or pd.isna(pop) or pop <= 0:
+            if not prior_fallback:
+                continue
+            raise ValueError(f"{r.city}: no usable population for {r.akey}")
+
+        rec = dict(city=r.city, name=r.name, akey=r.akey, year_used=int(row["year"]),
+                   population=float(pop), pop_source=pop_source)
+        for c in count_cols:
+            rec[f"{c}_rate"] = float(row[c]) / pop * 1000.0  # per 1,000 residents
+        records.append(rec)
+
+    df = compute_weighted_scores(pd.DataFrame(records))
+    keep = ["city", "name", "akey", "year_used", "population", "pop_source",
+            "wtotal_rate", "wprop_rate"]
+    return df[keep].set_index("city").sort_index()
+
+
+def build_agency_level(year: int | None = None) -> pd.DataFrame:
+    """Per-city *contemporaneous* agency crime level for ``year`` (default ``UCR_YEAR``).
+
+    The observed reference the lagged anchor is validated against: agency-reported crime
+    in the target year itself. Cities whose agency did not report ``year`` are dropped
+    (not back-filled), so this is a clean apples-to-apples persistence reference. Not
+    cached — this is a validation/diagnostic helper, not a model input.
+    """
+    return _weighted_level_panel(year or UCR_YEAR, prior_fallback=False)
+
+
 def build_lagged_agency_anchor(lag_year: int | None = None, refresh: bool = False) -> pd.DataFrame:
     """Per-city observed lagged agency crime level on the BG-target scale.
 
@@ -135,41 +203,7 @@ def build_lagged_agency_anchor(lag_year: int | None = None, refresh: bool = Fals
     if path.exists() and not refresh:
         return pd.read_parquet(path)
 
-    fs = get_gcs_fs()
-    hist = _load_history_panel(fs)
-    hist = hist[hist["year"] < UCR_YEAR].copy()
-    xwalk = resolve_city_akey()
-    pop_est = _agency_pop_estimates()
-    count_cols = PRIMARY_CRIMES  # murder, rape, robbery, assault, burglary, larceny, mvt
-
-    records = []
-    for r in xwalk.itertuples(index=False):
-        panel = hist[hist["akey"] == r.akey]
-        if panel.empty:
-            raise KeyError(f"{r.city}: agency {r.akey} has no rows in ucr_history < {UCR_YEAR}")
-        row = panel[panel["year"] == lag_year]
-        if row.empty:  # agency didn't report the target lag year -> most recent prior year
-            row = panel.sort_values("year").iloc[[-1]]
-        row = row.iloc[0]
-
-        pop = row.get("Population")
-        pop_source = "reported"
-        if pop is None or pd.isna(pop) or pop <= 0:
-            pop, pop_source = pop_est.get(r.akey), "popest_geo"
-        if pop is None or pd.isna(pop) or pop <= 0:
-            raise ValueError(f"{r.city}: no usable population for {r.akey}")
-
-        rec = dict(city=r.city, name=r.name, akey=r.akey, year_used=int(row["year"]),
-                   population=float(pop), pop_source=pop_source)
-        for c in count_cols:
-            rec[f"{c}_rate"] = float(row[c]) / pop * 1000.0  # per 1,000 residents
-        records.append(rec)
-
-    df = pd.DataFrame(records)
-    df = compute_weighted_scores(df)
-    keep = ["city", "name", "akey", "year_used", "population", "pop_source",
-            "wtotal_rate", "wprop_rate"]
-    df = df[keep].set_index("city").sort_index()
+    df = _weighted_level_panel(lag_year, prior_fallback=True)
 
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(path)
