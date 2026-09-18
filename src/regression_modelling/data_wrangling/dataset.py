@@ -18,8 +18,10 @@ from crime_blockgroup_mapping.scores import compute_weighted_scores
 from regression_modelling.constants import (
     TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL, PROPERTY_MODEL_TRANSFORMS,
     DEMOGRAPHIC_MODEL_TRANSFORMS, ACS_TRANSIT_MODEL_TRANSFORMS,
+    DIVISION_DUMMIES, APPROVED_EXISTING_PREDICTORS, AGENCY_ANCHOR_COL,
 )
 from regression_modelling.data_wrangling.features import assemble_features
+from regression_modelling.data_wrangling.lagged_agency import build_lagged_agency_anchor
 from regression_modelling.feature_engineering.transforms import apply_transforms
 
 
@@ -109,13 +111,34 @@ def build_model_table(city: str, refresh: bool = False,
     df["wtotal_lograte"] = np.log1p(df["wtotal_rate"])
     df["wprop_lograte"]  = np.log1p(df["wprop_rate"])
 
+    # ── existing-model (Department-approved) BETWEEN-city LEVEL features: Census-division
+    # dummies (POC idea #1). Constant within a city → only shift cross-city level (the
+    # incumbent's analog of the agency anchor). in_household_pct / det_pct (within-city
+    # varying) already arrive from the ACS feature pull.
+    for name, code in DIVISION_DUMMIES.items():
+        df[name] = (df["Division"] == code).astype("float64") if "Division" in df.columns else 0.0
+
+    # ── observed lagged UCR agency crime anchor (Model D leveller, ADR 0007): broadcast the
+    # city's prior-year weighted crime level to every BG (constant within city). Target-paired
+    # columns (wtotal / wprop). Skipped if the city is absent from the anchor table.
+    try:
+        anchor = build_lagged_agency_anchor()
+        if city in anchor.index:
+            df[AGENCY_ANCHOR_COL["wtotal"]] = float(np.log1p(anchor.loc[city, "wtotal_rate"]))
+            df[AGENCY_ANCHOR_COL["wprop"]] = float(np.log1p(anchor.loc[city, "wprop_rate"]))
+    except Exception as exc:  # anchor is an optional experiment input; never block the build
+        print(f"  note: agency anchor unavailable for {city} ({exc}); anchor columns skipped")
+
     out = PROCESSED_DIR / "regression_modelling" / f"{city}_model_table.parquet"
     out.parent.mkdir(parents=True, exist_ok=True)
+    extra = [c for c in (APPROVED_EXISTING_PREDICTORS + list(AGENCY_ANCHOR_COL.values()))
+             if c in df.columns]
     predictors = [c for c in PREDICTOR_COLS if c in df.columns]
     missing = [c for c in PREDICTOR_COLS if c not in df.columns]
     if missing:
         print(f"  note: {len(missing)} predictor(s) not yet available (skipped): {missing}")
-    df[predictors] = df[predictors].apply(pd.to_numeric, errors="coerce").astype("float64")
+    df[predictors + extra] = (df[predictors + extra]
+                              .apply(pd.to_numeric, errors="coerce").astype("float64"))
     df.to_parquet(out)
     print(f"{city}: model table {df.shape} → {out.relative_to(PROCESSED_DIR.parent.parent)}")
     return df

@@ -339,6 +339,40 @@ GTFS_TRANSIT_PREDICTOR_COLS = list(PREDICTOR_COLS)                       # == de
 ACS_TRANSIT_PREDICTOR_COLS = ([p for p in PREDICTOR_COLS if p not in TRANSIT_MODEL_PREDICTORS]
                               + ACS_TRANSIT_MODEL_PREDICTORS)
 
+# ── Existing-model (Department-approved) features ported to BG level (POC idea #1) ─────────
+# The incumbent national model's governance-APPROVED predictors (03_agency_comparison
+# `dept_approved`), MINUS the four our set already represents (pop-ring, vacancy, moved-1yr,
+# CBD-distance → `dept_redundant`). Split by the AXIS each acts on so the POC can show them
+# apart:
+#   WITHIN-city varying → real BG-level signal that can lift within-city RANKING.
+#   BETWEEN-city level  → Census-division dummies, CONSTANT within a city (each POC city sits
+#                         in exactly one division). They only shift cross-city LEVEL and demean
+#                         to zero in within-city models — the incumbent's analog of the agency
+#                         anchor below.
+APPROVED_WITHIN_PREDICTORS = ["in_household_pct", "det_pct"]
+APPROVED_LEVEL_PREDICTORS = ["div_encentral", "div_midatlantic", "div_southatlantic"]
+APPROVED_EXISTING_PREDICTORS = APPROVED_WITHIN_PREDICTORS + APPROVED_LEVEL_PREDICTORS
+
+# Census Division code (bg_predictors 'Division') -> incumbent dummy. 2=Mid-Atlantic,
+# 3=East North Central, 5=South Atlantic — the three the original 22-feature model carried;
+# every other division is the reference category.
+DIVISION_DUMMIES = {"div_midatlantic": 2, "div_encentral": 3, "div_southatlantic": 5}
+
+# ── Observed lagged UCR agency crime anchor (Model D leveller, ADR 0007) ───────────────────
+# One observed per-city crime level from the year BEFORE the target, broadcast to every BG in
+# the city (constant within city → a between-city LEVEL feature, like the division dummies).
+# Target-paired: wtotal models use the lagged wtotal level, wprop models the lagged wprop.
+AGENCY_ANCHOR_COL = {"wtotal": "agency_lag_wtotal_log", "wprop": "agency_lag_wprop_log"}
+
+# ── POC predictor SETS (axis 1 of the experiment grid; see models/experiments.py) ─────────
+# DERIVED so they cannot drift from their parts. The agency anchor is added per-target by the
+# experiment runner (AGENCY_ANCHOR_COL) rather than hard-listed, since its column is
+# target-specific.
+PREDICTOR_SETS = {
+    "ours": list(PREDICTOR_COLS),
+    "ours+approved": list(PREDICTOR_COLS) + APPROVED_EXISTING_PREDICTORS,
+}
+
 ZERO_FILL = [
     "vacant_pct",
     "clip_liens_pct",
@@ -366,4 +400,5 @@ ZERO_FILL = [
 MEDIAN_FILL = [
     "city_centers_dist", "pop_est_5mile", "pop_ch_1mile",  # 0 would be wrong
     "transit_nearest_stop_m",                              # distance; 0 = stop at centroid
+    "in_household_pct", "det_pct",                         # incumbent approved shares (bounded)
 ]
