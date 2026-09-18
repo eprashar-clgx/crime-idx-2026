@@ -202,16 +202,33 @@ def _demean_predictors(df: pd.DataFrame, predictors, city_col: str = "city") -> 
     return block - block.groupby(df[city_col].to_numpy()).transform("mean")
 
 
+# Alpha grid for the prediction-side RidgeCV (leave-one-out CV picks alpha per fold).
+# OLS stays the inference estimator (honest HC3 coefficients); Ridge is the prediction
+# estimator — it shrinks the correlated spatial-lag / transit / demographic block so LOCO
+# extrapolation is not thrown by unstable OLS slopes (ADR 0003; matches 03's RidgeCV harness).
+DEFAULT_RIDGE_ALPHAS = np.logspace(-2, 4, 25)
+
+
 def fit_fold(train: pd.DataFrame, mode: str = "rate_within_city",
              predictors=PREDICTOR_COLS, category: str = "cl_total",
              robust: str = "HC3", winsor_upper: float | None = None,
-             demean_by_city: bool = False, city_col: str = "city") -> dict:
-    """Fit a standardized OLS on ONE train fold. Scaler is fit on this train frame only.
+             demean_by_city: bool = False, city_col: str = "city",
+             estimator: str = "ols", ridge_alphas=None) -> dict:
+    """Fit a standardized model on ONE train fold. Scaler is fit on this train frame only.
 
     When ``demean_by_city`` is True the predictors are per-city demeaned BEFORE scaling
     (the within estimator — pair with a ``*_within_city`` target; see `_demean_predictors`).
-    Returns a dict bundling the fitted model, its HC3-robust wrapper, the train scaler, and
-    the metadata (incl. ``demean_by_city``/``city_col``) needed to score a holdout.
+
+    ``estimator`` selects the fit-time model (the design matrix / scaling / leakage-safety
+    are identical either way):
+      - ``"ols"`` (default) — statsmodels OLS + HC3 robust wrapper. The INFERENCE estimator
+        (honest coefficients + SEs). Returns ``result`` / ``robust``.
+      - ``"ridge"`` — sklearn ``RidgeCV`` (LOO CV over ``ridge_alphas``). The PREDICTION
+        estimator: shrinks the collinear predictor block so held-out (LOCO) prediction is
+        not driven by unstable OLS slopes. Returns ``ridge`` (fitted model) + ``alpha_``.
+
+    Returns a dict bundling the fitted model, the train scaler, and the metadata (incl.
+    ``estimator`` / ``demean_by_city`` / ``city_col``) needed to score a holdout.
     """
     d = train.copy()
     predictors = [p for p in predictors if p in d.columns]
@@ -220,16 +237,28 @@ def fit_fold(train: pd.DataFrame, mode: str = "rate_within_city",
 
     block = _demean_predictors(d, predictors, city_col) if demean_by_city else d[predictors]
     scaler = (block.mean(), block.std(ddof=0).replace(0, 1.0))
-    X = sm.add_constant((block - scaler[0]) / scaler[1], has_constant="add")
-    result = sm.OLS(d["_y"].to_numpy(), X).fit()
-    robust_res = result.get_robustcov_results(cov_type=robust)
+    Xstd = (block - scaler[0]) / scaler[1]
+    y = d["_y"].to_numpy()
 
-    return {
-        "result": result, "robust": robust_res, "scaler": scaler,
-        "predictors": list(predictors), "mode": mode, "category": category,
-        "n_train": int(result.nobs),
+    meta = {
+        "scaler": scaler, "predictors": list(predictors), "mode": mode,
+        "category": category, "n_train": int(len(d)),
         "demean_by_city": demean_by_city, "city_col": city_col,
+        "estimator": estimator,
     }
+
+    if estimator == "ridge":
+        from sklearn.linear_model import RidgeCV
+        alphas = DEFAULT_RIDGE_ALPHAS if ridge_alphas is None else ridge_alphas
+        model = RidgeCV(alphas=alphas).fit(Xstd.to_numpy(), y)
+        meta.update({"ridge": model, "alpha_": float(model.alpha_)})
+        return meta
+
+    X = sm.add_constant(Xstd, has_constant="add")
+    result = sm.OLS(y, X).fit()
+    robust_res = result.get_robustcov_results(cov_type=robust)
+    meta.update({"result": result, "robust": robust_res, "n_train": int(result.nobs)})
+    return meta
 
 
 def predict_fold(fit: dict, holdout: pd.DataFrame) -> pd.DataFrame:
@@ -246,8 +275,12 @@ def predict_fold(fit: dict, holdout: pd.DataFrame) -> pd.DataFrame:
     block = (_demean_predictors(d, fit["predictors"], fit.get("city_col", "city"))
              if fit.get("demean_by_city") else d[fit["predictors"]])
     mu, sd = fit["scaler"]
-    X = sm.add_constant((block - mu) / sd, has_constant="add")
-    d["y_pred"] = np.asarray(fit["result"].predict(X))
+    Xstd = (block - mu) / sd
+    if fit.get("estimator") == "ridge":
+        d["y_pred"] = np.asarray(fit["ridge"].predict(Xstd.to_numpy()))
+    else:
+        X = sm.add_constant(Xstd, has_constant="add")
+        d["y_pred"] = np.asarray(fit["result"].predict(X))
     return d
 
 
@@ -262,7 +295,7 @@ def predict_fold(fit: dict, holdout: pd.DataFrame) -> pd.DataFrame:
 def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
              predictors=PREDICTOR_COLS, category: str = "cl_total",
              winsor_upper: float | None = None,
-             demean_by_city: bool = False) -> dict:
+             demean_by_city: bool = False, estimator: str = "ols") -> dict:
     """Run rotating LOCO for one target mode.
 
     Returns a dict:
@@ -271,20 +304,23 @@ def run_loco(pooled: pd.DataFrame, mode: str = "rate_within_city",
       - ``fits``    : {city: fit-dict from `fit_fold`} for per-fold coefficient inspection.
       - ``mode`` / ``category`` / ``predictors`` / ``split`` : run metadata.
     Pass ``demean_by_city=True`` to pair per-city demeaned predictors with a within-city
-    target (the within estimator). Prints per-fold train/holdout sizes.
+    target (the within estimator). ``estimator`` ("ols"/"ridge") selects OLS (inference) or
+    RidgeCV (prediction). Prints per-fold train/holdout sizes.
     """
-    print(f"LOCO — target mode = {mode!r} ({category})"
+    print(f"LOCO — target mode = {mode!r} ({category}, {estimator})"
           + (", demeaned-X" if demean_by_city else "")
           + (f", winsor@{winsor_upper:g}" if winsor_upper is not None else ""))
     fits, parts = {}, []
     for city, train, holdout in loco_folds(pooled):
         fit = fit_fold(train, mode=mode, predictors=predictors, category=category,
-                       winsor_upper=winsor_upper, demean_by_city=demean_by_city)
+                       winsor_upper=winsor_upper, demean_by_city=demean_by_city,
+                       estimator=estimator)
         scored = predict_fold(fit, holdout).assign(holdout_city=city)
         fits[city] = fit
         parts.append(scored)
-        print(f"  holdout={city:14} n_train={fit['n_train']:>5} scored={len(scored):>5}"
-              f" adjR2_in={fit['result'].rsquared_adj:6.3f}")
+        tail = (f"adjR2_in={fit['result'].rsquared_adj:6.3f}" if "result" in fit
+                else f"alpha={fit['alpha_']:.3g}")
+        print(f"  holdout={city:14} n_train={fit['n_train']:>5} scored={len(scored):>5} {tail}")
 
     scored = pd.concat(parts, ignore_index=True)
     print(f"  -> {len(scored)} BGs scored out-of-sample across {len(fits)} folds")
@@ -329,22 +365,24 @@ def run_holdout(pooled: pd.DataFrame, mode: str = "lograte",
                 predictors=PREDICTOR_COLS, category: str = "cl_total",
                 test_size: float = 0.20, seed: int = 0,
                 winsor_upper: float | None = None,
-                demean_by_city: bool = False) -> dict:
+                demean_by_city: bool = False, estimator: str = "ols") -> dict:
     """Fit on a stratified TRAIN split, score the held-out TEST rows. Mirrors `run_loco`'s
     return schema (``scored`` tagged with `holdout_city` = each row's own city, plus a
     single ``fit``) so `loco_metrics` / `plot_lorenz` work unchanged. ``fits`` is left empty
     so no per-city in-sample adj-R2 is attached; read `fit['result'].rsquared_adj` for the
-    pooled in-sample number.
+    pooled in-sample number. ``estimator`` ("ols"/"ridge") mirrors `run_loco`.
     """
-    print(f"HOLDOUT — target mode = {mode!r} ({category})"
+    print(f"HOLDOUT — target mode = {mode!r} ({category}, {estimator})"
           + (", demeaned-X" if demean_by_city else "")
           + (f", winsor@{winsor_upper:g}" if winsor_upper is not None else ""))
     train, test = stratified_split(pooled, test_size=test_size, seed=seed)
     fit = fit_fold(train, mode=mode, predictors=predictors, category=category,
-                   winsor_upper=winsor_upper, demean_by_city=demean_by_city)
+                   winsor_upper=winsor_upper, demean_by_city=demean_by_city,
+                   estimator=estimator)
     scored = predict_fold(fit, test).assign(holdout_city=lambda d: d["city"])
-    print(f"  n_train={fit['n_train']:>5} scored={len(scored):>5}"
-          f" adjR2_in={fit['result'].rsquared_adj:6.3f}")
+    tail = (f"adjR2_in={fit['result'].rsquared_adj:6.3f}" if "result" in fit
+            else f"alpha={fit['alpha_']:.3g}")
+    print(f"  n_train={fit['n_train']:>5} scored={len(scored):>5} {tail}")
     return {"scored": scored, "fit": fit, "fits": {}, "mode": mode, "split": "holdout",
             "category": category, "predictors": list(predictors)}
 
@@ -457,6 +495,53 @@ def hotspot_metrics(df: pd.DataFrame, score_col: str = "y_pred",
         f"recall@{tag}": round(prec, 3),
         f"capture@{tag}": round(float(count[pred_top].sum() / count.sum()), 3),
     }
+
+
+def within_city_recall(run: dict, category: str | None = None,
+                       danger_top: float = 0.10, nets=(0.10, 0.30),
+                       safe_below: float = 0.50) -> pd.DataFrame:
+    """Dangerous-block recall, computed WITHIN city (mirrors 04_bg_comparison).
+
+    The business-cost framing from 04: under-prediction in risky blocks is the costly
+    error, over-prediction in safe blocks is cheap. So rank BGs *within their own city*
+    and ask, for the truly dangerous ones, where the model puts them.
+
+    - Truly dangerous = the top ``danger_top`` share of a city's BGs by OBSERVED
+      within-city rate (`{category}_rate`).
+    - For those blocks, take the model's within-city percentile of `y_pred`:
+        ``recall@top10`` / ``recall@top30`` = share the model also ranks in its own
+          within-city top decile / top 30% (higher = better),
+        ``called_safe`` = share the model buries below its within-city median
+          (`safe_below`) — the costly miss (lower = better).
+    Per-city rows + a POOLED row that averages membership over every city's dangerous
+    blocks (so each city is weighted by its dangerous-block count, matching 04).
+    """
+    cat = category or run["category"]
+    rate_col = _rate_col(run["mode"], cat)
+    scored = run["scored"]
+
+    rows, pooled_mp = [], []
+    for city, g in scored.groupby("holdout_city"):
+        obs_pct = g[rate_col].astype(float).rank(pct=True)
+        mod_pct = g["y_pred"].astype(float).rank(pct=True)
+        danger = obs_pct >= (1 - danger_top)
+        if danger.sum() == 0:
+            continue
+        mp = mod_pct[danger]
+        pooled_mp.append(mp)
+        row = {"holdout": city, "n_danger": int(danger.sum())}
+        for net in nets:
+            row[f"recall@top{int(net * 100)}"] = round(float((mp >= (1 - net)).mean()), 3)
+        row["called_safe"] = round(float((mp < safe_below).mean()), 3)
+        rows.append(row)
+
+    allmp = pd.concat(pooled_mp)
+    prow = {"holdout": "POOLED", "n_danger": int(len(allmp))}
+    for net in nets:
+        prow[f"recall@top{int(net * 100)}"] = round(float((allmp >= (1 - net)).mean()), 3)
+    prow["called_safe"] = round(float((allmp < safe_below).mean()), 3)
+    rows.append(prow)
+    return pd.DataFrame(rows).set_index("holdout")
 
 
 def loco_metrics(run: dict, x_unit: str = "population", capture_at: float = 0.20) -> pd.DataFrame:
