@@ -320,6 +320,25 @@ IMAGERY_PREDICTORS = [
 PREDICTOR_COLS = [*DEMOGRAPHIC_MODEL_PREDICTORS, *PROPERTY_MODEL_PREDICTORS,
                   *TRANSIT_MODEL_PREDICTORS, *IMAGERY_PREDICTORS]
 
+# ── Transit A/B variants (step 2) ────────────────────────────────────────────
+# Two interchangeable transit representations for the same fit-set, compared under the
+# prediction harness:
+#   GTFS  — the default `TRANSIT_MODEL_PREDICTORS` (per-city GTFS supply/exposure; richer but
+#           needs a feed per city → only the 10 ingested cities carry it).
+#   ACS   — commute-by-public-transit share (+ zero-vehicle households, a transit-dependence
+#           proxy); nationally available for EVERY BG (deployable to any city), governance-
+#           clean (commute mode / vehicle access, not a protected class).
+# Both are DERIVED from PREDICTOR_COLS so they cannot drift; the ACS variant swaps the GTFS
+# transit block out and the ACS transit block in. Pass either to `run_loco`/`run_holdout`
+# via `predictors=`; the active default fit-set (PREDICTOR_COLS) stays GTFS.
+ACS_TRANSIT_PREDICTORS = ["transit_pct", "veh0_pct"]
+ACS_TRANSIT_MODEL_TRANSFORMS = {"transit_pct": "log1p", "veh0_pct": "log1p"}
+ACS_TRANSIT_MODEL_PREDICTORS = ["transit_pct_log", "veh0_pct_log"]
+
+GTFS_TRANSIT_PREDICTOR_COLS = list(PREDICTOR_COLS)                       # == default
+ACS_TRANSIT_PREDICTOR_COLS = ([p for p in PREDICTOR_COLS if p not in TRANSIT_MODEL_PREDICTORS]
+                              + ACS_TRANSIT_MODEL_PREDICTORS)
+
 ZERO_FILL = [
     "vacant_pct",
     "clip_liens_pct",
@@ -337,6 +356,9 @@ ZERO_FILL = [
     "transit_overnight_stop_count",
     "transit_overnight_stop_share",
     "transit_route_mode_diversity",
+    # ACS-transit variant inputs: 0 = no transit commuters / no zero-vehicle households
+    "transit_pct",
+    "veh0_pct",
     # "transit_risky_stop_count",      # promote with the risky predictors above
     # "transit_risky_stop_share",
     # "transit_risky_allnight_count",

@@ -17,7 +17,7 @@ from crime_blockgroup_mapping.rates import (
 from crime_blockgroup_mapping.scores import compute_weighted_scores
 from regression_modelling.constants import (
     TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL, PROPERTY_MODEL_TRANSFORMS,
-    DEMOGRAPHIC_MODEL_TRANSFORMS,
+    DEMOGRAPHIC_MODEL_TRANSFORMS, ACS_TRANSIT_MODEL_TRANSFORMS,
 )
 from regression_modelling.data_wrangling.features import assemble_features
 from regression_modelling.feature_engineering.transforms import apply_transforms
@@ -92,6 +92,10 @@ def build_model_table(city: str, refresh: bool = False,
     # demographic model form: log1p the right-skewed 5-mile population ring count into
     # pop_est_5mile_log (ADR 0006) — raw scale destabilises the log1p-target fit.
     df, _ = apply_transforms(df, spec=DEMOGRAPHIC_MODEL_TRANSFORMS, has_transit_from=None)
+    # ACS-transit variant model form: log1p the commute-by-transit share + zero-vehicle
+    # household share (transit_pct_log / veh0_pct_log). Skipped if the raw ACS columns are
+    # absent (e.g. an older cached feature matrix); rebuild features to populate them.
+    df, _ = apply_transforms(df, spec=ACS_TRANSIT_MODEL_TRANSFORMS, has_transit_from=None)
 
     # log(count + 1) targets (primary); *_rate kept as validators
     for c in count_cols:

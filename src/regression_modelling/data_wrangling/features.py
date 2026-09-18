@@ -5,7 +5,9 @@ from regression_modelling.config import source_parquet
 from regression_modelling.constants import FEATURE_SOURCES
 from regression_modelling.data_wrangling.sources import get_gcs_fs, read_sav_from_gcs, pull_source
 
-ACS_COLS = ["det_pct", "moved1yr_pct", "own_pct", "lap_pct"]
+ACS_COLS = ["det_pct", "moved1yr_pct", "own_pct", "lap_pct",
+            "transit_pct", "veh0_pct"]   # ACS-transit variant: commute-by-transit share +
+                                         # zero-vehicle households (transit dependence)
 
 def wavg(df, group, weight, values):
     """Weighted average of `values` by `group`, weighted by `weight`."""
