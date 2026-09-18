@@ -24,9 +24,12 @@ def standardize(X: pd.DataFrame) -> pd.DataFrame:
 
     NOTE: standardized on the full estimation sample. This is an *inferential*
     fit (we want the coefficients), not a held-out prediction task, so there is
-    no train/test leakage concern here.
+    no train/test leakage concern here. Zero-variance columns (e.g. a between-city
+    level feature that is constant within a city once demeaned) map to all-zeros
+    rather than NaN, so they enter the design harmlessly (pinv drops them).
     """
-    return (X - X.mean()) / X.std(ddof=0)
+    sd = X.std(ddof=0).replace(0, 1.0)
+    return (X - X.mean()) / sd
 
 
 def fit_ols(df: pd.DataFrame, target: str,
