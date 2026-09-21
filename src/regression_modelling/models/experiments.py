@@ -57,6 +57,7 @@ class ExperimentSpec:
     training: str                 # AXIS 3: "loco" | "80_20"
     model: str                    # AXIS 4: "ridge" | "ols" | "gbm"
     transit: str = "gtfs"         # AXIS 2 sub-variant: "gtfs" | "acs"
+    gbm_params: dict | None = None  # optional LightGBM hyperparameter override (else defaults)
 
     def label(self) -> str:
         return (f"{self.predictor_set} · {self.transform} · {self.training} · "
@@ -80,19 +81,27 @@ def resolve_predictors(spec: ExperimentSpec, category: str, pool: pd.DataFrame) 
     return [p for p in preds if p in pool.columns]
 
 
-def _run_gbm(pool, mode, predictors, category, training):
+def _run_gbm(pool, mode, predictors, category, training, gbm_params=None):
     """LightGBM LOCO / 80-20 scorer mirroring run_loco's return schema. Trees are level- and
     scale-invariant, so predictors enter raw (no demean / standardize); the target still
-    follows the transform's mode so within-city runs predict within-city rank."""
+    follows the transform's mode so within-city runs predict within-city rank.
+
+    ``gbm_params`` optionally overrides the default LightGBM hyperparameters (e.g. an
+    Optuna-tuned set); anything not supplied falls back to the deployed defaults."""
     import lightgbm as lgb
+
+    # Deployed defaults; a tuned override is merged on top so callers can pass a partial set.
+    params = dict(n_estimators=500, learning_rate=0.03, num_leaves=31,
+                  subsample=0.8, colsample_bytree=0.8, min_child_samples=40,
+                  n_jobs=1, verbose=-1)
+    if gbm_params:
+        params.update(gbm_params)
 
     def fit_score(train, test, city_tag):
         tr = train.dropna(subset=predictors).copy()
         tr["_y"] = make_target(tr, mode, category)
         tr = tr.dropna(subset=["_y"])
-        m = lgb.LGBMRegressor(n_estimators=500, learning_rate=0.03, num_leaves=31,
-                              subsample=0.8, colsample_bytree=0.8, min_child_samples=40,
-                              n_jobs=1, verbose=-1)
+        m = lgb.LGBMRegressor(**params)
         m.fit(tr[predictors], tr["_y"].to_numpy())
         te = test.dropna(subset=predictors).copy()
         te["y_pred"] = m.predict(te[predictors])
@@ -120,7 +129,7 @@ def run_spec(spec: ExperimentSpec, pool: pd.DataFrame, category: str) -> dict:
         return runner(pool, mode=mode, predictors=preds, category=category,
                       demean_by_city=demean, estimator=spec.model)
     if spec.model == "gbm":
-        return _run_gbm(pool, mode, preds, category, spec.training)
+        return _run_gbm(pool, mode, preds, category, spec.training, spec.gbm_params)
     raise ValueError(f"unknown model {spec.model!r}")
 
 
