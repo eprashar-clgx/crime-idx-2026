@@ -8,12 +8,14 @@ incumbent with the *exact same* helpers (`within_city_recall`, `within_city_r2`,
 side-by-side comparison rather than two hand-rolled metric paths.
 
 The incumbent per-BG prediction ships in ``data/interim/bg_crime/{city}.parquet`` as a
-points-count risk score (``total_pt_ct`` for the total composite, ``property_pt_ct`` for the
-property composite). It is compared, *within a city*, against the observed weighted
-relative-risk rate (``compute_weighted_scores`` → ``wtotal_rate`` / ``wprop_rate``) — the same
-target the refresh models. Prediction and target are on different scales, so all comparisons
-here are rank/level-based (Pearson/Spearman, within-city percentile recall), which are
-invariant to the linear rescaling between the two.
+predicted weighted crime rate (``total_pt_ct`` for the total composite, ``property_pt_ct`` for
+the property composite) — a linear risk model that down-scales agency crime to the block group,
+calibrated so each agency's population-weighted mean matches its agency rate. It is compared,
+*within a city*, against the observed weighted relative-risk rate (``compute_weighted_scores``
+→ ``wtotal_rate`` / ``wprop_rate``) — the same target the refresh models. Both are the same
+kind of weighted rate, but the incumbent carries a per-city level offset (it is agency-anchored,
+the observed rate is national-composite-anchored), so comparisons here are rank/level-based
+(Pearson/Spearman, within-city percentile recall), which are invariant to that offset.
 
 The incumbent is a single *deployed* model, so it has no LOCO / 80-20 split — one fixed set of
 numbers that sits beside every refresh protocol.
@@ -27,7 +29,7 @@ from crime_blockgroup_mapping.config import INTERIM_DIR
 from crime_blockgroup_mapping.constants import CITIES
 from crime_blockgroup_mapping.scores import compute_weighted_scores, PRIMARY_CRIMES
 
-# Incumbent prediction column per target family (points-count risk score).
+# Incumbent prediction column per target family (predicted weighted crime rate).
 EXISTING_PRED_COL = {"wtotal": "total_pt_ct", "wprop": "property_pt_ct"}
 # Drop a handful of tiny-population BGs whose count/pop rates explode (matches 04).
 POP_FLOOR = 250
@@ -45,7 +47,7 @@ def existing_model_run(category: str = "wtotal", cities: list[str] | None = None
     """Assemble a refresh-style ``run`` dict for the INCUMBENT model.
 
     ``scored`` carries ``city`` / ``holdout_city`` / ``population`` / ``y_pred`` (the incumbent
-    points-count prediction, ``log1p``-transformed onto the log-rate scale so its within-city
+    predicted weighted rate, ``log1p``-transformed onto the log-rate scale so its within-city
     correlation/recall line up with the refresh's ``lograte`` predictions) / ``{category}_rate``
     (observed weighted rate), one row per within-city BG above ``pop_floor`` — the exact shape
     ``within_city_recall`` / ``within_city_r2`` expect, with ``mode="lograte_within_city"`` so
