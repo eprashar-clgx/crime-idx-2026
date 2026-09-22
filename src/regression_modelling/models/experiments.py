@@ -169,7 +169,10 @@ def _metrics_row(spec: ExperimentSpec, run: dict, category: str) -> dict:
     row = {"category": category, **asdict(spec),
            "n": int(m["n"]), "skill": m.get("skill"), "spearman": m.get("spearman")}
     if spec.transform == "within_city":
-        rec = within_city_recall(run, category).loc["POOLED"]
+        # Legacy 4-axis grid: keep its original worst-DECILE → top-10%/30% recall
+        # (pinned explicitly; the cv default is now the worst-QUARTILE 25/25 recall the
+        # 02/04 notebooks report).
+        rec = within_city_recall(run, category, danger_top=0.10, nets=(0.10, 0.30)).loc["POOLED"]
         row["recall@top10"] = rec["recall@top10"]
         row["recall@top30"] = rec["recall@top30"]
         row["called_safe"] = rec["called_safe"]

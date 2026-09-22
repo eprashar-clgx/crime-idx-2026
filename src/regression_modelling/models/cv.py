@@ -498,7 +498,7 @@ def hotspot_metrics(df: pd.DataFrame, score_col: str = "y_pred",
 
 
 def within_city_recall(run: dict, category: str | None = None,
-                       danger_top: float = 0.10, nets=(0.10, 0.30),
+                       danger_top: float = 0.25, nets=(0.25,),
                        safe_below: float = 0.50) -> pd.DataFrame:
     """Dangerous-block recall, computed WITHIN city (mirrors 04_bg_comparison).
 
@@ -507,10 +507,13 @@ def within_city_recall(run: dict, category: str | None = None,
     and ask, for the truly dangerous ones, where the model puts them.
 
     - Truly dangerous = the top ``danger_top`` share of a city's BGs by OBSERVED
-      within-city rate (`{category}_rate`).
+      within-city rate (`{category}_rate`). Default **0.25** = the worst quartile.
     - For those blocks, take the model's within-city percentile of `y_pred`:
-        ``recall@top10`` / ``recall@top30`` = share the model also ranks in its own
-          within-city top decile / top 30% (higher = better),
+        ``recall@top{N}`` (one per ``net`` in ``nets``) = share the model also ranks in
+          its own within-city top-``net`` (higher = better). With the default symmetric
+          setting (``danger_top`` = ``net`` = 0.25) this reads plainly as: *of a city's
+          observed worst-quartile blocks, the share the model also puts in its predicted
+          worst quartile*.
         ``called_safe`` = share the model buries below its within-city median
           (`safe_below`) — the costly miss (lower = better).
     Per-city rows + a POOLED row that averages membership over every city's dangerous
