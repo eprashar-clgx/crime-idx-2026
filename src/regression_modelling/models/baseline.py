@@ -3,9 +3,9 @@
 `04_bg_comparison` established the incumbent's scale case: it levels whole cities almost
 perfectly (between-city) but fits weakly *within* a city (95% of the variance). This module
 reproduces that panel as a **run-like dict** so the prediction notebook can score the
-incumbent with the *exact same* helpers (`within_city_recall`, `within_city_r2`,
-`loco_metrics`-style level) it uses for the refresh — guaranteeing an apples-to-apples,
-side-by-side comparison rather than two hand-rolled metric paths.
+incumbent with the *exact same* helpers (`within_city_recall`, `loco_metrics`) it uses for
+the refresh — guaranteeing an apples-to-apples, side-by-side comparison rather than two
+hand-rolled metric paths.
 
 The incumbent per-BG prediction ships in ``data/interim/bg_crime/{city}.parquet`` as a
 predicted weighted crime rate (``total_pt_ct`` for the total composite, ``property_pt_ct`` for
@@ -36,10 +36,12 @@ POP_FLOOR = 250
 
 
 def _default_cities(category: str) -> list[str]:
-    """wtotal is comparable only for the full-coverage cities (property-only cities have a
-    degenerate observed total); wprop is comparable for all POC cities."""
-    return [c for c, cfg in CITIES.items()
-            if category == "wprop" or not cfg.property_only]
+    """The incumbent is scored on the same pool the refresh is trained on, so the
+    comparison is like-for-like. Delegates to the single pool owner (ADR 0008) rather
+    than re-deriving eligibility here — this previously kept its own copy of the rule and
+    silently included cities with degenerate all-zero crime extracts."""
+    from regression_modelling.models.cv import target_pool
+    return target_pool(category, verbose=False)
 
 
 def existing_model_run(category: str = "wtotal", cities: list[str] | None = None,
@@ -50,7 +52,7 @@ def existing_model_run(category: str = "wtotal", cities: list[str] | None = None
     predicted weighted rate, ``log1p``-transformed onto the log-rate scale so its within-city
     correlation/recall line up with the refresh's ``lograte`` predictions) / ``{category}_rate``
     (observed weighted rate), one row per within-city BG above ``pop_floor`` — the exact shape
-    ``within_city_recall`` / ``within_city_r2`` expect, with ``mode="lograte_within_city"`` so
+    ``within_city_recall`` / ``loco_metrics`` expect, with ``mode="lograte_within_city"`` so
     ``_rate_col`` resolves to ``{category}_rate``. (``log1p`` is monotonic, so it leaves the
     within-city ranking — hence recall — unchanged; it only puts the R²/level correlations on
     the same log-log footing as ``04_bg_comparison``.)

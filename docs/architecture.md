@@ -2,8 +2,9 @@
 
 This repo supports the statistical tasks needed to build (and evaluate) a
 block-group crime-risk model. It is organized as **one module per task**, sharing a
-single foundation module. Chicago and Houston (2025) are the initial POC samples;
-four more cities follow.
+single foundation module. Ten POC cities (2025 incident data) are currently ingested;
+each modelling target runs on its own **target pool** of those cities, which grows as
+the POC scales.
 
 See `docs/CONTEXT.md` for the glossary and `docs/adr/0001-task-oriented-module-restructure.md`
 for the rationale behind this structure.
@@ -28,7 +29,7 @@ src/
       sources.py · features.py · dataset.py · sql/{build,pull,explore}/
     feature_engineering/           # winsorize, scale, log, spatial terms
     distributions/                 # counts, distributions, corr, VIF; POI store-EDA (eda.py + plots.py)
-    models/                        # OLS, coefficient tables, Moran's I diagnostic
+    models/                        # dataset/target, LOCO + holdout harness, metrics, baseline
     bias_testing/                  # predictor-vs-protected-attribute (e.g. race) checks
     logging/                       # run / experiment logging
   carrier_eval/                    # SIDE-QUEST: evaluate the existing model vs carrier data
@@ -79,8 +80,8 @@ flowchart TD
         FE["feature_engineering: winsorize / scale / log / spatial"]
         DS["dataset: features join target<br/>data/processed/regression_modelling/{city}_model_table.parquet"]
         EDA["distributions: counts, corr, VIF, POI EDA"]
-        FIT["models: fit OLS + coef tables"]
-        DIAG["models: residuals + Moran's I"]
+        FIT["models: LOCO / holdout fit<br/>Ridge · OLS · LightGBM"]
+        DIAG["models: metrics + per-city diagnostics<br/>r2_oos · recall@10 · level_r"]
         BIAS["bias_testing: predictor vs race"]
     end
 
@@ -134,8 +135,16 @@ flowchart TD
 - **distributions** — counts, distributions, correlations, VIF; POI store-EDA
   (`eda.py`) with folium visualization (`plots.py`). Its explore SQL templates live
   under `data_wrangling/sql/explore` (co-located with the `sources.load_sql` loader).
-- **models** — fit OLS / regularized / spatial regression, coefficient tables, and
-  diagnostics (HC3 SEs, residuals, **Moran's I**).
+- **models** — the prediction path (`cv.py`): target construction, **LOCO** (unseen-city
+  extrapolation) and **stratified 80/20** (unseen-BG interpolation) protocols, pooled
+  RidgeCV / OLS / LightGBM fitting, and the metric surface (`r2_oos`, `mae`,
+  `within_city_recall`, level correlations). `experiments.py` dispatches predictor-set ×
+  target × protocol × estimator comparisons; `baseline.py` reproduces the deployed
+  incumbent as a run-shaped dict so it scores through the same helpers. `model.py` holds
+  the separate **inference** path: standardized OLS, HC3 coefficient tables, and
+  **Moran's I** on residuals. City eligibility for every target comes from `target_pool`.
+  See `docs/adr/0008-modelling-module-boundaries.md` for the planned split of this
+  folder into `dataset` / `harness` / `scorecard` / `diagnostics`.
 - **bias_testing** — verify predictors correlate with crime and not with protected
   attributes such as race.
 - **logging** — record run configuration and results across iterations.

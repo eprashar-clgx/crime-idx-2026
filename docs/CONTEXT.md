@@ -60,6 +60,59 @@ the main POC). Holds carrier-evals ingestion/aggregation and its own maps. The *
 reconstruction math** (`compute_weighted_scores`, `extract_national_rates`) now lives in
 `crime_blockgroup_mapping` (ADR 0005) and is imported from there.
 
+## Metric vocabulary
+
+Every number that reaches a deck has exactly one name here. The rule that keeps them
+apart: a **skill score** is punished by getting the level wrong; a **correlation** is
+not, because it is affine-invariant. Both were previously called "R²", which hid the
+exact failure the scale case exists to expose (ADR 0007: the incumbent ranks acceptably
+and levels badly).
+
+### Skill scores (level-sensitive — miscalibration costs you)
+
+- **`r2_oos`** — out-of-sample 1 − SSE/SST on the served scale, pooled over held-out
+  rows. The headline fit metric. Falls when predictions are systematically shifted.
+- **`adj_r2_in`** — in-sample adjusted R² for a single fold. A fit-quality check on the
+  training side, never a headline.
+- **`mae`** — mean absolute error, reported on the **`log1p` weighted-rate scale** in
+  the block-group work (`02`, `04`). `03_agency_comparison` reports MAE in **raw rate
+  units** because it inverse-transforms with `expm1` before scoring. The two are on
+  different scales and must never be compared directly.
+
+### Correlations (level-blind — say "corr", never "R²")
+
+- **`within_corr`** — mean per-city Pearson of predicted vs observed, **not squared**.
+  Answers "does the model order block groups correctly inside a city".
+- **`within_corr2`** — the same quantity squared, read as within-city variance
+  explained. Formerly `within_R2` (`experiments.py`) and `corr2` (notebooks).
+- **`level_r`** — between-city Pearson of *city means*, predicted vs observed. The
+  cross-city LEVEL skill. Also called **between-city level**.
+- **`pooled_corr2`** — squared correlation over all held-out rows at once, ignoring city.
+  Reads as "the `r2_oos` this model would reach if each city were recalibrated
+  perfectly", so the gap between `pooled_corr2` and `r2_oos` *is* the calibration debt.
+
+### Rank capture (the product metric)
+
+- **`recall@N`** — computed **within city**, symmetric by default. Of a city's observed
+  worst-N share of block groups (by observed rate), the share the model also places in
+  its **own** predicted worst-N. Because both sides use the same N, **chance = N**:
+  `recall@10` of 0.10 is worthless, 0.40 is 4x chance.
+  - **Report `recall@10` as the headline.** `recall@25`'s wide net flatters every model
+    to roughly 2x chance and compresses the gap between them.
+  - Owned by `within_city_recall`. It is the *only* recall in the codebase; the
+    precision-equals-recall top-k variant was removed to end the name collision.
+- **`called_safe`** — of those same observed-dangerous blocks, the share the model
+  buries below its within-city median. The costly miss; lower is better.
+
+### Scope words (always say which)
+
+- **within-city** — computed after ranking or demeaning inside each city. ~95% of
+  observed variance is within-city (ADR 0007).
+- **between-city** — computed on city means. ~5% of the variance, and the part the
+  incumbent already handles well.
+- **pooled** — computed over all held-out rows at once. Dominated by within-city
+  scatter, so a pooled number is not a between-city claim.
+
 ## Design vocabulary (from improve-codebase-architecture)
 
 - **module** — a folder/file with one goal.
@@ -84,9 +137,17 @@ reconstruction math** (`compute_weighted_scores`, `extract_national_rates`) now 
 - **prediction target** — primary is the **weighted (relative-risk) rate**, run in TWO
   forms (ADR 0003 §Update 2026-09-10): **`log(weighted rate)`** (absolute level, one
   intercept) and its **per-city z-score** (`*_within_city`, the within-city "risk index"
-  headline). Modeled for `wprop` (property composite, 10 cities) and `wtotal` (total, 5
-  cities); resident-pop denominator. `crime_rate` / `log(count+1)` are now comparators.
-  Zero/NaN-pop BGs **dropped** before the fit. Report HC3 SEs; check Moran's I.
+  headline). Modeled for `wprop` (property composite) and `wtotal` (total); each runs on
+  its own **target pool** (below), not a fixed city count. Resident-pop denominator.
+  `crime_rate` / `log(count+1)` are now comparators. Zero/NaN-pop BGs **dropped** before
+  the fit. Report HC3 SEs; check Moran's I.
+- **target pool** — the cities a given target is actually modelled on: those that both
+  **can** support it (*source capability* — `CityConfig.property_only` marks sources that
+  suppress violent-crime coordinates, so they carry `wprop` only) and **did** produce
+  usable crime (*observed usability* — extracts whose counts are entirely zero make rank
+  and level metrics undefined and are excluded, each exclusion logged with its reason).
+  Owned by one function, `target_pool(target)`; never hardcoded in a notebook and never
+  asserted as a count in prose. Pool size grows as the POC scales (ADR 0008).
 - **target-paired predictors** — pair the predictor treatment to the target (ADR 0003
   §Update): **pooled/raw predictors** with the absolute `log`-rate target; **per-city
   demeaned predictors** with the within-city z-score target (the within / fixed-effects

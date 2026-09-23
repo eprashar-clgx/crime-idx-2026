@@ -27,8 +27,73 @@ def full_coverage_cities() -> list[str]:
     Derived from `CityConfig.property_only` so it can never drift from the per-city
     config: property-only cities (SF, Pittsburgh, Columbus, Jacksonville, Sacramento)
     are excluded; the survivors are Houston, Chicago, Atlanta, Kansas City, Detroit.
+
+    This is **source capability only** — it does not check whether a city's extract
+    actually produced crime. Prefer `target_pool`, which applies both tests.
     """
     return [c for c, cfg in CITIES.items() if not cfg.property_only]
+
+
+def _capable_cities(target: str) -> list[str]:
+    """Cities whose crime source *can* support `target` (source capability).
+
+    `wtotal` needs geolocated violent crime, so `property_only` sources are excluded.
+    `wprop` only needs property crime, which every POC source carries.
+    """
+    if target == "wtotal":
+        return [c for c, cfg in CITIES.items() if not cfg.property_only]
+    if target == "wprop":
+        return list(CITIES.keys())
+    raise ValueError(f"unknown target {target!r} (expected 'wtotal' or 'wprop')")
+
+
+def target_pool(target: str, refresh: bool = False, verbose: bool = True) -> list[str]:
+    """The cities `target` is actually modelled on — the one owner of city eligibility.
+
+    Two independent tests, per ADR 0008:
+
+    1. **Source capability** — can this city's crime feed support the target at all?
+       Declared up front in `CityConfig.property_only`, never re-derived from data.
+    2. **Observed usability** — did the extract actually produce crime? A city whose
+       counts are entirely zero (BG geometry present, crime never joined) yields a
+       constant rate, which makes correlation, ranking and level metrics undefined and
+       poisons pooled LEVEL metrics. Columbus is the known case.
+
+    Every exclusion is logged with its reason, because at 15-20 cities a silently
+    shrinking pool is the kind of thing that costs a day to notice.
+
+    Replaces `full_coverage_cities()` and the per-notebook pool definitions it drifted
+    from. Docs name this concept; they do not assert a city count.
+    """
+    capable = _capable_cities(target)
+    rate_col = f"{target}_rate"
+
+    usable, degenerate, missing = [], [], []
+    for city in capable:
+        try:
+            df = load_city_table(city, refresh=refresh)
+        except FileNotFoundError:
+            missing.append(city)
+            continue
+        if rate_col not in df.columns or float(df[rate_col].abs().sum()) == 0:
+            degenerate.append(city)
+            continue
+        usable.append(city)
+
+    if verbose:
+        skipped = [c for c in CITIES if c not in capable]
+        print(f"target_pool({target!r}): {len(usable)} cities")
+        if skipped:
+            print(f"  excluded {len(skipped)} (source lacks violent-crime coords): "
+                  f"{', '.join(skipped)}")
+        if degenerate:
+            print(f"  excluded {len(degenerate)} (all-zero crime extract, upstream gap): "
+                  f"{', '.join(degenerate)}")
+        if missing:
+            print(f"  excluded {len(missing)} (no cached model table): "
+                  f"{', '.join(missing)}")
+
+    return usable
 
 
 def _model_table_path(city: str):

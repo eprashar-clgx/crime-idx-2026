@@ -133,9 +133,14 @@ def run_spec(spec: ExperimentSpec, pool: pd.DataFrame, category: str) -> dict:
     raise ValueError(f"unknown model {spec.model!r}")
 
 
-def _within_r2_pooled(run: dict) -> float:
-    """Mean per-city within-city R² (Pearson² of y_pred vs log1p(rate)) — the honest
-    'within-city variance explained', affine-invariant so demeaning does not matter."""
+def _within_corr2_pooled(run: dict) -> float:
+    """Mean per-city within-city **squared correlation** (Pearson² of y_pred vs
+    log1p(rate)) — within-city variance explained.
+
+    Deliberately not called "R²": it is affine-invariant, so a model that ranks a city
+    correctly but levels it badly scores identically to one that gets both right. The
+    level-sensitive counterpart is `r2_oos`. See the metric vocabulary in CONTEXT.md.
+    """
     from regression_modelling.models.cv import _rate_col
     rate_col = _rate_col(run["mode"], run["category"])
     r2s = []
@@ -176,7 +181,7 @@ def _metrics_row(spec: ExperimentSpec, run: dict, category: str) -> dict:
         row["recall@top10"] = rec["recall@top10"]
         row["recall@top30"] = rec["recall@top30"]
         row["called_safe"] = rec["called_safe"]
-        row["within_R2"] = _within_r2_pooled(run)
+        row["within_corr2"] = _within_corr2_pooled(run)
     else:  # absolute → the between-city LEVEL metrics (r2_oos over all BGs + city-mean level_r)
         row["r2_oos"] = m.get("r2_oos")
         row["level_r"] = between_city_level_r(run)
