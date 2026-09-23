@@ -186,6 +186,12 @@ and levels badly).
   ~46→2.3M) is log-scaled to **`pop_est_5mile_log`** — raw scale destabilised the fit
   (`expm1` blow-up; agency adj R² 0.22→0.36), ADR 0006. Raw names persist for EDA/imputation
   (`DEMOGRAPHIC_PREDICTORS`, `MEDIAN_FILL`); the model-form list feeds `PREDICTOR_COLS`.
+- **deployable predictor set** — the predictors that exist for **every** block group
+  nationally, so a model built on them can score a city we hold no data for. The default
+  fit-set is *not* deployable: it uses GTFS transit predictors, which need a transit feed
+  ingested per city. `ACS_TRANSIT_PREDICTOR_COLS` swaps those for commute-by-transit
+  share and zero-vehicle households. The gap between the two is the price of
+  deployability and should always be reported, not assumed away (ADR 0009).
 - **filtered geoid set** — the post-drop geoids the fit actually runs on. Spatial weights
   (Moran's I), CV folds, and the bias-testing join must all align to it, not the full
   boundary set (ADR 0003).
