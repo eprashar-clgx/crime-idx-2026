@@ -129,6 +129,24 @@ FEATURE_SOURCES = {
             "imagery_structure_count",
         ),
     ),
+    # Roadway (TIGER + Overture) — materialized out-of-band by roadway.build_all_roadway
+    # (backend="file"), mirroring transit. National-coverage layer (every BG in the model
+    # cities gets a real value; no structural nulls the way transit has stopless BGs).
+    # feature_cols are the candidate BG predictors (docs/features/roadway_plan.md §4);
+    # CANDIDATE only — not yet in PREDICTOR_COLS until distribution/correlation EDA decides.
+    "roadway": FeatureSource(
+        name="roadway",
+        backend="file",
+        location="build via regression_modelling.data_wrangling.roadway.build_all_roadway",
+        key_col="geoid",
+        feature_cols=(
+            "roadway_nearest_ramp_m",
+            "roadway_nearest_interstate_m",
+            "roadway_ramp_count",
+            "roadway_arterial_density",
+            "roadway_intersection_density",
+        ),
+    ),
 }
 
 # Store universes for the generic block-group builder (sql/build/stores.sql).
@@ -310,6 +328,19 @@ IMAGERY_PREDICTORS = [
 # roof_discoloration_pct_avg removed: strongly collinear with roof_condition_avg (both
 # proxy the same roof-degradation signal), so only roof_condition_avg is retained.
 
+# roadway (TIGER + Overture) — highway-access/edge (R1), arterial (R2), permeability (R3,
+# exploratory) candidates. CANDIDATE predictors, deliberately NOT in PREDICTOR_COLS yet:
+# see docs/features/roadway_plan.md §4/§7 — pull into the feature matrix for distribution +
+# correlation EDA first, promote a retained (functional-form) set after that (mirrors how
+# TRANSIT_PREDICTORS -> TRANSIT_MODEL_PREDICTORS worked).
+ROADWAY_PREDICTORS = [
+    "roadway_nearest_ramp_m",
+    "roadway_nearest_interstate_m",
+    "roadway_ramp_count",
+    "roadway_arterial_density",
+    "roadway_intersection_density",
+]
+
 # Active fit-set: demographic (model form: log1p population ring count) + property (model
 # form: log distress shares + spatial lags + store counts) + transit (model form) + imagery.
 # PREDICTOR_COLS is DERIVED so it cannot drift from its parts. The raw DEMOGRAPHIC_PREDICTORS
@@ -393,6 +424,10 @@ ZERO_FILL = [
     # ACS-transit variant inputs: 0 = no transit commuters / no zero-vehicle households
     "transit_pct",
     "veh0_pct",
+    # roadway: national TIGER layer, no structural nulls — 0 = no ramp/road segment observed
+    "roadway_ramp_count",
+    "roadway_arterial_density",
+    "roadway_intersection_density",
     # "transit_risky_stop_count",      # promote with the risky predictors above
     # "transit_risky_stop_share",
     # "transit_risky_allnight_count",
@@ -401,4 +436,5 @@ MEDIAN_FILL = [
     "city_centers_dist", "pop_est_5mile", "pop_ch_1mile",  # 0 would be wrong
     "transit_nearest_stop_m",                              # distance; 0 = stop at centroid
     "in_household_pct", "det_pct",                         # incumbent approved shares (bounded)
+    "roadway_nearest_ramp_m", "roadway_nearest_interstate_m",  # distance; 0 = ramp at centroid
 ]

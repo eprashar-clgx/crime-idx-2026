@@ -79,3 +79,32 @@ def transit_facilities_parquet(category: str):
     pulled once from BigQuery then reused offline for the stop co-location join.
     """
     return INTERIM_DIR / "transit" / "facilities" / f"{category}.parquet"
+
+
+def tiger_roads_zip(state_fips: str, county_fips: str, year: int = 2024):
+    """Immutable downloaded TIGER/Line county roads zip (data/raw/roadway/tiger/).
+
+    One zip per (state, county) FIPS pair, shared across every city whose BGs fall in
+    that county (e.g. multiple cities can pull the same county). Filename mirrors the
+    Census source name so it is identifiable outside this repo:
+    ``tl_{year}_{state_fips}{county_fips}_roads.zip``.
+    """
+    return RAW_DIR / "roadway" / "tiger" / f"tl_{year}_{state_fips}{county_fips}_roads.zip"
+
+
+def roadway_tiger_county_parquet(state_fips: str, county_fips: str, year: int = 2024):
+    """Cached, filtered (MTFCC-relevant) county roads layer, reprojected to EPSG:5070.
+
+    data/interim/roadway/tiger/{state_fips}{county_fips}_{year}.parquet — one per county,
+    reused across cities without re-parsing the raw shapefile each build.
+    """
+    return INTERIM_DIR / "roadway" / "tiger" / f"{state_fips}{county_fips}_{year}.parquet"
+
+
+def roadway_overture_parquet(city: str):
+    """Cached Overture connector (intersection) layer for a city's bbox.
+
+    data/interim/roadway/overture/{city}.parquet — connector points with a computed
+    degree (distinct segments referencing it), pre-filtered to degree >= 3.
+    """
+    return INTERIM_DIR / "roadway" / "overture" / f"{city}.parquet"
