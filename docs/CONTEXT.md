@@ -84,7 +84,8 @@ and levels badly).
 - **`within_corr`** — mean per-city Pearson of predicted vs observed, **not squared**.
   Answers "does the model order block groups correctly inside a city".
 - **`within_corr2`** — the same quantity squared, read as within-city variance
-  explained. Formerly `within_R2` (`experiments.py`) and `corr2` (notebooks).
+  explained. Formerly `within_R2` (the retired `experiments.py`) and `corr2` (notebooks);
+  now `metrics.within_corr2_pooled`.
 - **`level_r`** — between-city Pearson of *city means*, predicted vs observed. The
   cross-city LEVEL skill. Also called **between-city level**.
 - **`pooled_corr2`** — squared correlation over all held-out rows at once, ignoring city.
@@ -152,7 +153,7 @@ and levels badly).
   §Update): **pooled/raw predictors** with the absolute `log`-rate target; **per-city
   demeaned predictors** with the within-city z-score target (the within / fixed-effects
   estimator). Demeaning uses each city's OWN observed predictors, so it survives test time
-  — unlike city dummies, which a held-out city has no intercept for. (`cv.fit_fold(...,
+  — unlike city dummies, which a held-out city has no intercept for. (`training.run_cv(...,
   demean_by_city=True)`.)
 - **exposure** — population at risk. A big-population BG mechanically has more crimes.
   Handled by the **rate denominator** (`crime_rate = count/pop × 1000`), not a GLM offset —
@@ -160,11 +161,11 @@ and levels badly).
 - **grouped CV / leave-one-city-out (LOCO)** — the **extrapolation** protocol: pool BGs
   across cities, cross-validate with folds **held out by city** ("predict an unseen city").
   Random k-fold is not used — it leaks spatial autocorrelation across neighboring BGs
-  (ADR 0003). `cv.run_loco`.
+  (ADR 0003). `training.run_loco`.
 - **stratified 80/20 split** — the **interpolation** protocol: a random split stratified by
   city (every city ~80/20), "predict unseen BGs in cities partly seen." Spatially leaky and
   city-level-aware → **optimistic** R². The gap vs LOCO measures the value of having seen a
-  city before. `cv.run_holdout` (ADR 0003 §Update).
+  city before. `training.run_holdout` (ADR 0003 §Update).
 - **per-city baseline** — the archived per-city OLS fit, kept runnable to inspect
   **cross-city coefficient heterogeneity** (does an effect differ Chicago vs Houston?). A
   documented baseline, not a headline output (ADR 0003).

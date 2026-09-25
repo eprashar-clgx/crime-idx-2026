@@ -395,7 +395,7 @@ DIVISION_DUMMIES = {"div_midatlantic": 2, "div_encentral": 3, "div_southatlantic
 # Target-paired: wtotal models use the lagged wtotal level, wprop models the lagged wprop.
 AGENCY_ANCHOR_COL = {"wtotal": "agency_lag_wtotal_log", "wprop": "agency_lag_wprop_log"}
 
-# ── POC predictor SETS (axis 1 of the experiment grid; see models/experiments.py) ─────────
+# ── POC predictor SETS (resolved by models/dataset.predictor_set) ─────────────────────────
 # DERIVED so they cannot drift from their parts. The agency anchor is added per-target by the
 # experiment runner (AGENCY_ANCHOR_COL) rather than hard-listed, since its column is
 # target-specific.

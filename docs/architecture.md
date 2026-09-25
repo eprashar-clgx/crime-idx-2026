@@ -135,16 +135,24 @@ flowchart TD
 - **distributions** — counts, distributions, correlations, VIF; POI store-EDA
   (`eda.py`) with folium visualization (`plots.py`). Its explore SQL templates live
   under `data_wrangling/sql/explore` (co-located with the `sources.load_sql` loader).
-- **models** — the prediction path (`cv.py`): target construction, **LOCO** (unseen-city
-  extrapolation) and **stratified 80/20** (unseen-BG interpolation) protocols, pooled
-  RidgeCV / OLS / LightGBM fitting, and the metric surface (`r2_oos`, `mae`,
-  `within_city_recall`, level correlations). `experiments.py` dispatches predictor-set ×
-  target × protocol × estimator comparisons; `baseline.py` reproduces the deployed
-  incumbent as a run-shaped dict so it scores through the same helpers. `model.py` holds
-  the separate **inference** path: standardized OLS, HC3 coefficient tables, and
-  **Moran's I** on residuals. City eligibility for every target comes from `target_pool`.
-  See `docs/adr/0008-modelling-module-boundaries.md` for the planned split of this
-  folder into `dataset` / `harness` / `scorecard` / `diagnostics`.
+- **models** — split by question, per `docs/adr/0008-modelling-module-boundaries.md`:
+  - `dataset.py` — *what are we modelling?* City eligibility (`target_pool`, the one
+    owner), the pooled BG frame, the target (`make_target`) and named predictor sets.
+  - `training.py` — *how well does it score a city we have not seen?* Fold protocols
+    (**LOCO** extrapolation, **stratified 80/20** interpolation), estimators (RidgeCV /
+    OLS / LightGBM), and one orchestrator (`run_cv`) pairing any protocol with any
+    estimator. Each estimator owns its own preprocessing, so the **fold-local scaler**
+    is leakage-safe by construction.
+  - `results.py` — `FoldRun`, the result contract `training` produces and everything
+    downstream consumes. Imported by both sides so neither depends on the other.
+  - `metrics.py` — the metric surface (`r2_oos`, `mae`, `within_city_recall`, level
+    correlations). Reads a `FoldRun` and nothing else.
+  - `diagnostics.py` — *why does it fit, or not?* Per-city fit decomposition,
+    permutation importance, ridge coefficients, GBM gain.
+  - `inference.py` — the explanatory path: standardized OLS, HC3 coefficient tables,
+    **Moran's I** on residuals. Fits on the full sample; makes no held-out claim.
+  - `incumbent.py` — the deployed agency-scale model expressed as a `FoldRun`, so it
+    scores through the same rank metrics as the refresh.
 - **bias_testing** — verify predictors correlate with crime and not with protected
   attributes such as race.
 - **logging** — record run configuration and results across iterations.

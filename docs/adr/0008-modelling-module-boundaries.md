@@ -141,3 +141,89 @@ different ways.
 - Scale-up work will feel like configuration rather than development. If that turns out
   to be false — if 20 cities forces chunked loading or BigQuery-side aggregation — that
   is a genuine second task and this decision should be revisited.
+
+---
+
+## Landing 2 — implemented
+
+The split is done. Final module names differ slightly from the sketch above (`training`
+rather than `harness`, `metrics` rather than `scorecard`), and three design questions
+were settled during implementation.
+
+### Final layout
+
+| module | question it answers | lines |
+|---|---|---|
+| `dataset.py` | What are we modelling? Eligibility, pooled frame, target, predictor sets. | 326 |
+| `training.py` | How well does it score a city we have not seen? Fold protocols, estimators, orchestrator. | 338 |
+| `results.py` | What does a run look like? The `FoldRun` contract. | 63 |
+| `metrics.py` | How good is it? | 268 |
+| `diagnostics.py` | Why does it fit, or not? | 139 |
+| `inference.py` | What does the relationship say? | 112 |
+| `incumbent.py` | What must we beat? | 104 |
+
+`cv.py`, `experiments.py`, `model.py` and `baseline.py` are deleted. `src` grew ~180
+lines net while absorbing ~130 lines of function definitions **out of** notebook 02
+(cells 21/27) and dropping 11 dead functions.
+
+### Decision: an estimator owns its own preprocessing
+
+Rejected: the orchestrator standardizes and asks each estimator whether it wants it
+(`needs_scaling`). That flag is a shallow interface — an estimator detail leaking
+through the seam — and every later preprocessing need adds another branch.
+
+Chosen: `fit(train, predictors, y)` / `predict(test)`. `LinearEstimator` computes the
+**fold-local scaler** inside `fit`; `GbmEstimator` has no scaler at all, because trees
+are scale-invariant.
+
+This is what removed the third driver. `experiments._run_gbm` existed **only** to skip
+the scaler, and in doing so re-implemented fold rotation. Once preprocessing became an
+estimator concern, `run_loco`, `run_holdout` and `_run_gbm` collapsed into one
+`run_cv` loop. It also makes the leakage rule structural rather than conventional: the
+holdout frame is not in scope at the moment the scaler is computed, so there is no line
+a future contributor can move to break LOCO.
+
+Standardization is not cosmetic for ridge — predictor sds span ~350x, and the ridge
+penalty is scale-dependent, so on raw columns one alpha would shrink a small-sd
+predictor hundreds of times harder than a large-sd one. (Checked: the chosen alphas sit
+at grid indices 14-16 of 24, so the penalty is not railing at either bound.)
+
+### Decision: the target is fold-invariant and may be precomputed
+
+`make_target` groups by city, so a city's target depends only on its own rows. Verified
+exhaustively: `max |precomputed - per-fold| = 0.000e+00` for both `lograte` and
+`lograte_within_city`. `dataset.load_pool(target, mode=...)` therefore attaches `_y` up
+front, and `make_target` stays public for one-off variants.
+
+This is the **opposite** of the scaler, and the contrast is the module boundary: the
+scaler pools across train cities (fold-local, lives in `training`), the target does not
+(fold-invariant, lives in `dataset`).
+
+One caveat found while verifying: the `*_within_city` modes are invariant to dropping
+other *cities* but not to dropping *rows within* a city, since the z-score moments are
+taken over the rows present. The target must therefore be built **before** the
+null-predictor `dropna`. The retired `_run_gbm` did the reverse, so a `within_city`
+spec silently produced a different target for GBM than for ridge. No reported number
+was affected — no live notebook ran that combination — and `run_cv` now uses one order.
+
+### Decision: `FoldRun` is a frozen dataclass in its own module
+
+The three old drivers already returned the same dict shape by hand-matched convention;
+`_run_gbm`'s docstring said so explicitly. That convention was load-bearing — it is why
+one metric function serves ridge, GBM, LOCO and 80/20 alike — but nothing enforced it,
+and `run_holdout` had already drifted an unused `"fit"` key.
+
+`FoldRun` writes the contract down. It computes nothing. Its value is that a new fold
+protocol (spatial stratification, at scale-up) gets **every existing metric for free**
+provided it returns one.
+
+It lives in `results.py`, not `training.py`, so the dependency stays one-way:
+`training` and `metrics` both import `results`, and `metrics` never imports `training`.
+
+### Verification
+
+Old and new drivers were compared directly before the old files were deleted: **all 7
+linear configurations** (ridge/ols x loco/holdout, demeaned within-city, winsorized) and
+**both GBM `lograte` configurations** reproduce bit-for-bit, `max|Δy_pred| = 0.000e+00`.
+Metric tables compare `.equals()`-identical. All three notebooks re-executed clean and
+every headline number is unchanged.
