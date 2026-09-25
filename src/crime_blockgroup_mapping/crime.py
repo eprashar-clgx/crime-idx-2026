@@ -16,6 +16,8 @@ def load_crime_data(cfg: CityConfig, csv_path: str = None, year_filter=_USE_CONF
     otherwise from ``cfg.lon_col``/``cfg.lat_col``; coords are read in ``cfg.crs`` and
     reprojected to EPSG:4326. Sources with one row per person-involvement set
     ``cfg.dedup_keys`` to collapse to one row per offense (keeping coord-bearing rows).
+    ``cfg.explode_delim`` splits multi-offence cells into one row each, and
+    ``cfg.drop_points`` discards geocoder sentinel coordinates.
     ``year_filter`` defaults to ``cfg.year_filter`` (a ``(start, end)`` pair kept as
     ``start <= date < end``); pass ``None`` to disable or a ``(start, end)`` pair to override.
     """
@@ -56,6 +58,17 @@ def load_crime_data(cfg: CityConfig, csv_path: str = None, year_filter=_USE_CONF
         print(f"{cfg.name} year_filter [{yf[0]}, {yf[1]}): kept {len(df):,} of {n_raw:,} "
               f"rows ({n_bad:,} unparseable dates dropped)")
 
+    # Sources that pack several offence codes into one cell (e.g. Milwaukee's
+    # `Offense_All` = "13A;13C") are split into one row per offence, so the category
+    # counts are comparable with the one-row-per-offence NIBRS cities.
+    if cfg.explode_delim:
+        n_before = len(df)
+        codes = df[cfg.crime_type_col].astype('string').str.split(cfg.explode_delim)
+        df = df.assign(**{cfg.crime_type_col: codes}).explode(cfg.crime_type_col)
+        df[cfg.crime_type_col] = df[cfg.crime_type_col].str.strip()
+        df = df.reset_index(drop=True)
+        print(f"{cfg.name} explode on '{cfg.explode_delim}': {n_before:,} -> {len(df):,} rows")
+
     # Build geometry from either a single WKT column or separate lon/lat columns.
     # Nulls are kept for now so dedup can prefer coord-bearing rows.
     if cfg.wkt_col:
@@ -70,6 +83,19 @@ def load_crime_data(cfg: CityConfig, csv_path: str = None, year_filter=_USE_CONF
         geom = gpd.GeoSeries(pts, index=df.index, crs=cfg.crs)
         geom = geom.where(df[cfg.lat_col].notna() & df[cfg.lon_col].notna())
     gdf = gpd.GeoDataFrame(df, geometry=geom.values, crs=cfg.crs)
+
+    # Some geocoders place un-locatable addresses on a single sentinel point (e.g.
+    # Milwaukee sends every "UNKNOWN" address to 43.195304/-87.854834). Left in, those
+    # rows would pile a false hotspot onto one block group, so they are dropped.
+    if cfg.drop_points:
+        targets = {(round(lat, 5), round(lon, 5)) for lat, lon in cfg.drop_points}
+        coords = gdf.geometry.apply(
+            lambda g: (round(g.y, 5), round(g.x, 5))
+            if g is not None and not g.is_empty else None)
+        hit = coords.isin(targets)
+        if hit.any():
+            print(f"{cfg.name} drop_points: removed {int(hit.sum()):,} placeholder-coord rows")
+        gdf = gdf[~hit]
 
     # Some sources (e.g. Kansas City) carry one row per person-involvement; collapse to one
     # row per offense, preferring the row that carries coordinates.
@@ -110,7 +136,26 @@ def sjoin_crimes_to_bgs(crime_gdf: gpd.GeoDataFrame, bg_gdf: gpd.GeoDataFrame) -
 def map_crime_categories(crime_bg: gpd.GeoDataFrame, cfg: CityConfig) -> gpd.GeoDataFrame:
     """Map crime type codes to standardized categories using city-specific mapping."""
     df = crime_bg.copy()
-    df['crime_category'] = df[cfg.crime_type_col].map(cfg.crime_type_mapping)
+    codes = df[cfg.crime_type_col]
+    if not (pd.api.types.is_object_dtype(codes) or pd.api.types.is_string_dtype(codes)):
+        # Purely numeric code columns (e.g. NYC `ky_cd`) are inferred as int/float, but the
+        # mappings are keyed by string; cast back without picking up a ".0" suffix.
+        codes = codes.astype('Int64').astype('string')
+    df['crime_category'] = codes.map(cfg.crime_type_mapping)
+
+    # Where a city's crime-type bucket is too coarse or contaminated to trust on its own
+    # (Oakland), keep the mapped category only when a second column also matches.
+    if cfg.refine_map:
+        if cfg.refine_col not in df.columns:
+            raise KeyError(f"{cfg.name}: refine_col '{cfg.refine_col}' not found")
+        detail = df[cfg.refine_col].astype('string').fillna('')
+        for raw, pattern in cfg.refine_map.items():
+            in_bucket = codes.eq(raw).fillna(False)
+            fails = in_bucket & ~detail.str.contains(pattern, case=False, regex=True, na=False)
+            if fails.any():
+                print(f"{cfg.name} refine '{raw}': unmapped {int(fails.sum()):,} of "
+                      f"{int(in_bucket.sum()):,} rows failing /{pattern[:40]}.../")
+            df.loc[fails, 'crime_category'] = None
     mapped = df['crime_category'].notna().sum()
     total = len(df)
     print(f"Mapped: {mapped:,} / {total:,} ({mapped/total*100:.1f}%)")
