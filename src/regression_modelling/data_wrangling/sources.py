@@ -1,3 +1,4 @@
+import os
 import tempfile
 import pandas as pd
 import pyreadstat
@@ -15,12 +16,15 @@ def get_gcs_fs() -> GCSFileSystem:
     return GCSFileSystem(project=GCS_PROJECT, token="google_default")
 
 def read_sav_from_gcs(gcs_path: str, fs: GCSFileSystem):
-    with fs.open(gcs_path, "rb") as gcs_file:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+    # pyreadstat needs a real file path; /tmp is RAM-backed here, so always unlink.
+    with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
+        tmp_path = tmp.name
+        with fs.open(gcs_path, "rb") as gcs_file:
             tmp.write(gcs_file.read())
-            tmp.flush()
-            tmp.close()
-            df, meta = pyreadstat.read_sav(tmp.name)
+    try:
+        df, meta = pyreadstat.read_sav(tmp_path)
+    finally:
+        os.unlink(tmp_path)
     return df, meta
 
 # --- BQ ---

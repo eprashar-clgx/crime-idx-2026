@@ -129,7 +129,7 @@ FEATURE_SOURCES = {
             "imagery_structure_count",
         ),
     ),
-    # Roadway (TIGER + Overture) — materialized out-of-band by roadway.build_all_roadway
+    # Roadway (TIGER + FHWA HPMS, public domain) — materialized out-of-band by roadway.build_all_roadway
     # (backend="file"), mirroring transit. National-coverage layer (every BG in the model
     # cities gets a real value; no structural nulls the way transit has stopless BGs).
     # feature_cols are the candidate BG predictors (docs/features/roadway_plan.md §4);
@@ -328,7 +328,7 @@ IMAGERY_PREDICTORS = [
 # roof_discoloration_pct_avg removed: strongly collinear with roof_condition_avg (both
 # proxy the same roof-degradation signal), so only roof_condition_avg is retained.
 
-# roadway (TIGER + Overture) — highway-access/edge (R1), arterial (R2), permeability (R3,
+# roadway (TIGER + FHWA HPMS) — highway-access/edge (R1), arterial (R2), permeability (R3,
 # exploratory) candidates. CANDIDATE predictors, deliberately NOT in PREDICTOR_COLS yet:
 # see docs/features/roadway_plan.md §4/§7 — pull into the feature matrix for distribution +
 # correlation EDA first, promote a retained (functional-form) set after that (mirrors how

@@ -1,17 +1,17 @@
-"""Build the BG-level roadway feature table: TIGER roads + Overture junctions -> geoid.
+"""Build the BG-level roadway feature table: TIGER roads/edges + HPMS arterials -> geoid.
 
 `build_roadway(city)` materializes a per-city contribution; `build_all_roadway()` stacks
 all model cities into data/interim/sources/roadway.parquet — the parquet the `roadway`
 FeatureSource (backend="file") reads via `pull_source`, mirroring transit.build (see
 docs/features/roadway_plan.md §6). Building is out-of-band: nothing in the normal pull
-path triggers it.
+path triggers it. All sources are public domain (TIGER: Census; HPMS: FHWA).
 
 Five candidate raw features (roadway_plan.md §4):
-    roadway_nearest_ramp_m        BG centroid -> nearest ramp (R1)
-    roadway_nearest_interstate_m  BG centroid -> nearest interstate/limited-access (R1)
-    roadway_ramp_count            ramp segments intersecting the BG polygon (R1)
-    roadway_arterial_density      km of interstate+arterial road per km^2, clipped to BG (R2)
-    roadway_intersection_density  Overture junctions (degree>=3) per km^2 (R3, exploratory)
+    roadway_nearest_ramp_m        BG centroid -> nearest ramp, TIGER S1630 (R1)
+    roadway_nearest_interstate_m  BG centroid -> nearest interstate, TIGER S1100 (R1)
+    roadway_ramp_count            TIGER ramp features intersecting the BG polygon (R1)
+    roadway_arterial_density      km of HPMS arterial (f_system 3-4) per km^2, clipped to BG (R2)
+    roadway_intersection_density  TIGER EDGES street junctions (degree>=3) per km^2 (R3)
 """
 from __future__ import annotations
 
@@ -25,9 +25,11 @@ from crime_blockgroup_mapping.boundaries import (
 )
 from regression_modelling.config import source_parquet
 from regression_modelling.data_wrangling.roadway.tiger import (
-    load_roads_for_counties, MTFCC_RAMP, MTFCC_INTERSTATE, MTFCC_ARTERIAL,
+    load_roads_for_counties, load_junctions_for_counties, MTFCC_RAMP, MTFCC_INTERSTATE,
 )
-from regression_modelling.data_wrangling.roadway.overture import load_city_intersections
+from regression_modelling.data_wrangling.roadway.hpms import (
+    load_hpms_for_counties, F_SYSTEM_ARTERIAL,
+)
 
 _EQUAL_AREA_CRS = "EPSG:5070"
 
@@ -48,12 +50,12 @@ def _nearest_distance_m(points: gpd.GeoDataFrame, targets: gpd.GeoDataFrame) -> 
 def build_roadway(city: str, refresh: bool = False) -> pd.DataFrame:
     """BG-level roadway predictors for one city, keyed by `geoid`.
 
-    Steps: load within-city BGs (foundation, same as transit) -> pull TIGER roads for
-    every county the city's BGs touch -> nearest-distance (ramp, interstate) from each BG
-    centroid -> ramp count + arterial density clipped to each BG polygon -> Overture
-    junction density. Every within-city BG is emitted (roadless BGs get a real, large
-    nearest-distance and zero counts/densities — there are no structural nulls here,
-    unlike transit, since TIGER covers every county nationally).
+    Steps: load within-city BGs (foundation, same as transit) -> pull TIGER roads, TIGER
+    edge junctions and HPMS sections for every county the city's BGs touch ->
+    nearest-distance (ramp, interstate) from each BG centroid -> ramp count, arterial
+    density and junction density per BG polygon. Every within-city BG is emitted (roadless
+    BGs get a real, large nearest-distance and zero counts/densities — there are no
+    structural nulls here, unlike transit, since all three sources cover every county).
     """
     cfg = CITIES[city]
     bg = load_state_block_groups(cfg)
@@ -63,11 +65,15 @@ def build_roadway(city: str, refresh: bool = False) -> pd.DataFrame:
 
     counties = sorted({(cfg.state_fips, cf[len(cfg.state_fips):]) for cf in bg_city["county_fips"]})
     roads = load_roads_for_counties(counties, refresh=refresh)
-    print(f"roadway[{city}]: {len(roads):,} road segments across {len(counties)} count(y/ies)")
+    print(f"roadway[{city}]: {len(roads):,} TIGER road features across {len(counties)} count(y/ies)")
 
     ramps = roads[roads["mtfcc"] == MTFCC_RAMP]
     interstates = roads[roads["mtfcc"] == MTFCC_INTERSTATE]
-    arterials = roads[roads["mtfcc"].isin([MTFCC_INTERSTATE, MTFCC_ARTERIAL])]
+    # HPMS principal + minor arterials only: interstates/freeways (f_system 1-2) are already
+    # captured by nearest_interstate_m, so excluding them keeps R1 and R2 separable.
+    hpms = load_hpms_for_counties(counties, refresh=refresh)
+    arterials = hpms[hpms["f_system"].isin(F_SYSTEM_ARTERIAL)]
+    print(f"roadway[{city}]: {len(arterials):,} HPMS arterial sections (f_system 3-4)")
 
     centroids = bg_city.copy()
     centroids["geometry"] = centroids.geometry.centroid
@@ -95,9 +101,8 @@ def build_roadway(city: str, refresh: bool = False) -> pd.DataFrame:
         density = (len_by_bg / area_km2).reindex(bg_city["geoid"]).fillna(0.0)
         out["roadway_arterial_density"] = out["geoid"].map(density).to_numpy()
 
-    # Overture junction density (R3, exploratory).
-    bounds = load_city_boundary(cfg).to_crs("EPSG:4326").total_bounds  # (xmin, ymin, xmax, ymax)
-    junctions = load_city_intersections(city, tuple(bounds), refresh=refresh)
+    # Street-junction density from TIGER EDGES topology (R3).
+    junctions = load_junctions_for_counties(counties, refresh=refresh)
     if junctions.empty:
         out["roadway_intersection_density"] = 0.0
     else:

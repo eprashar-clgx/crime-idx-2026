@@ -101,10 +101,28 @@ def roadway_tiger_county_parquet(state_fips: str, county_fips: str, year: int = 
     return INTERIM_DIR / "roadway" / "tiger" / f"{state_fips}{county_fips}_{year}.parquet"
 
 
-def roadway_overture_parquet(city: str):
-    """Cached Overture connector (intersection) layer for a city's bbox.
+def roadway_tiger_junctions_parquet(state_fips: str, county_fips: str, year: int = 2024):
+    """Cached street-junction points for one county, derived from TIGER EDGES topology.
 
-    data/interim/roadway/overture/{city}.parquet — connector points with a computed
-    degree (distinct segments referencing it), pre-filtered to degree >= 3.
+    data/interim/roadway/tiger_junctions/{state_fips}{county_fips}_{year}.parquet — nodes
+    where >= 3 public-street edges meet (EPSG:5070), with their degree.
     """
-    return INTERIM_DIR / "roadway" / "overture" / f"{city}.parquet"
+    return INTERIM_DIR / "roadway" / "tiger_junctions" / f"{state_fips}{county_fips}_{year}.parquet"
+
+
+def tiger_edges_zip(state_fips: str, county_fips: str, year: int = 2024):
+    """Immutable downloaded TIGER/Line county EDGES zip (data/raw/roadway/tiger/).
+
+    The topological layer (every edge carries from/to node ids TNIDF/TNIDT) — used for
+    junction degree, which the ROADS layer (one record per named road) cannot provide.
+    """
+    return RAW_DIR / "roadway" / "tiger" / f"tl_{year}_{state_fips}{county_fips}_edges.zip"
+
+
+def hpms_county_parquet(state_usps: str, county_fips: str, year: int = 2024):
+    """Immutable HPMS pull for one county (data/raw/roadway/hpms/{ST}_{county}_{year}.parquet).
+
+    Server-side-filtered query of FHWA's HPMS_FULL_{ST}_{year} FeatureServer (functional
+    class 1-4, mainline sections only), stored as GeoParquet in EPSG:4326 as received.
+    """
+    return RAW_DIR / "roadway" / "hpms" / f"{state_usps}_{county_fips}_{year}.parquet"

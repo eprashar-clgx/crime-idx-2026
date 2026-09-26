@@ -92,20 +92,36 @@ One BG-level `roadway_*` family, engineered to slot into the exact machinery bui
 transit (`feature_engineering.transforms.apply_transforms`, the hurdle form, and the
 `correlation_matrix` variance guard). Candidate raw features and their intended model form:
 
-| # | Raw feature | Definition | Source (MTFCC / Overture) | Hypothesis | Model form |
+| # | Raw feature | Definition | Source | Hypothesis | Model form |
 |---|---|---|---|---|---|
-| 1 | `roadway_nearest_ramp_m` | meters, BG centroid → nearest ramp | TIGER `S1630` | R1 | `has_highway_access` (extensive) + `nearest_ramp_m_logc` (log1p, centered on served — hurdle) |
-| 2 | `roadway_nearest_interstate_m` | meters → nearest interstate/limited-access | TIGER `S1100` | R1 (edge) | `nearest_interstate_m_log` |
-| 3 | `roadway_ramp_count` | # ramp segments within BG (or buffer) | TIGER `S1630` | R1 | `log1p` |
-| 4 | `roadway_arterial_density` | km of primary+secondary road per km² | TIGER `S1100`+`S1200` | R2 | `log1p` |
-| 5 | `roadway_intersection_density` | intersections (deg ≥ 3) per km² | Overture / TIGER nodes | R3 (contested) | `log1p` — exploratory, verify sign |
+| 1 | `roadway_nearest_ramp_m` | meters, BG centroid → nearest ramp | TIGER ROADS `S1630` | R1 | `has_highway_access` (extensive) + `nearest_ramp_m_logc` (log1p, centered on served — hurdle) |
+| 2 | `roadway_nearest_interstate_m` | meters → nearest interstate/limited-access | TIGER ROADS `S1100` | R1 (edge) | `nearest_interstate_m_log` |
+| 3 | `roadway_ramp_count` | # ramp features intersecting the BG | TIGER ROADS `S1630` | R1 | `log1p` |
+| 4 | `roadway_arterial_density` | km of principal + minor arterial per km², clipped to BG (interstates/freeways excluded — already in #2) | FHWA HPMS `f_system` 3–4 | R2 | `log1p` |
+| 5 | `roadway_intersection_density` | street junctions (≥ 3 incident `S1200`/`S1400` edges) per km² | TIGER EDGES topology | R3 (contested) | `log1p` — exploratory, verify sign |
+
+**Why HPMS for #4, not TIGER `S1200`.** TIGER's `S1200` ("secondary road") only covers
+*numbered* US/state/county highways; most big-city arterials (e.g. Chicago's grid main
+streets) are coded `S1400` alongside every residential street, with no hierarchy inside it.
+An `S1200`-only arterial density was 76% zeros and near-null in Chicago/SF/KC. Adding
+`S1400` doesn't help — it's 74–92% of road length, measures grid density (ρ ≈ 0.6 with #5),
+and still can't tell a main street from a cul-de-sac. HPMS `f_system` is FHWA's official
+functional classification (1 Interstate, 2 Other freeway/expressway, 3 Other principal
+arterial, 4 Minor arterial, 5–6 collectors, 7 local), assigned by state DOTs.
+
+**Why TIGER EDGES for #5.** ROADS has one record per named road, crossing others at interior
+vertices, so endpoint degree is meaningless. EDGES is the topological layer (every edge split
+at every node, with from/to node ids `TNIDF`/`TNIDT`), so degree is a direct count. Only
+at-grade public streets (`S1200`, `S1400`) count toward degree — TIGER topology is planar,
+so including `S1100`/`S1630` would register overpasses as false junctions.
 
 - **`has_highway_access`** = `1[nearest_ramp_m ≤ threshold]` (or ramp_count > 0) — the
   extensive margin, defined for **every** BG (unlike transit). Threshold to be set in EDA.
 - Hurdle centering on feature 1 (`nearest_ramp_m_logc` centered on the served mass) reuses the
   exact trick that made `transit_has_transit` ⟂ `service_intensity` — see `transit_stats.md`.
 - **Deferred (not in first build):** `roadway_aadt_near` (traffic exposure) — no evidence base
-  (§3 gap 1). Revisit after the TIGER features are validated.
+  (§3 gap 1). The HPMS pull already carries `aadt` on every section, so this needs no new
+  source when revisited.
 
 Expected collinearity (to resolve with `correlation_matrix` + hurdle, as with transit): the
 distance features (ramp vs interstate) and the two density features will correlate; ramp
@@ -116,42 +132,48 @@ the same way — likely keep one distance (edge), one density (arterial), plus t
 
 ## 5. Data sources & licensing decision
 
-**Chosen stack: TIGER/Line (primary) + Overture (permeability). No raw OSM. No AADT yet.**
+**Chosen stack: TIGER/Line + FHWA HPMS — public domain only. No OSM, no Overture.**
 
 | Source | Role | License | Commercial? |
 |---|---|---|---|
-| **US Census TIGER/Line Roads** | ramps (`S1630`), interstate (`S1100`), arterials (`S1200`); nearest-distance, counts, arterial density | Public domain | ✅ clean |
-| **Overture Maps — transportation** | intersection density / permeability (OSM-lineage topology) | **CDLA-Permissive 2.0** | ✅ attribution only |
-| ~~OpenStreetMap via `osmnx`~~ | (rejected as a source) richer `basic_stats` permeability | **ODbL 1.0** | ⚠️ share-alike on redistribution |
-| ~~FHWA HPMS / state DOT AADT~~ | (deferred) traffic volume | Public domain | ✅ but no evidence base |
+| **US Census TIGER/Line ROADS** | ramps (`S1630`), interstate (`S1100`); nearest-distance, ramp count | Public domain | ✅ clean |
+| **US Census TIGER/Line EDGES** | street-junction topology (intersection density) | Public domain | ✅ clean |
+| **FHWA HPMS (2024)** | functional class (arterial density); carries AADT for the deferred feature | US federal publication; no licence restrictions stated | ✅ clean (confirm with legal) |
+| ~~Overture Maps — transportation~~ | (dropped) was the intersection-density source | **ODbL 1.0** | ⚠️ share-alike on redistribution |
+| ~~OpenStreetMap via `osmnx`~~ | (rejected) richer `basic_stats` permeability | **ODbL 1.0** | ⚠️ share-alike on redistribution |
 
-**Why not raw OSM (the ODbL caveat).** OSM data is ODbL 1.0: (1) **attribution** required, and
-(2) **share-alike** — publicly distributing a *derivative database* built from OSM (or a
+**Why no OSM-lineage data (the ODbL caveat).** ODbL 1.0 requires (1) **attribution** and
+(2) **share-alike** — publicly distributing a *derivative database* built from it (or a
 produced work made from one) can force you to release that derivative database under ODbL.
-Internal feature computation is generally fine, but once OSM-derived roadway columns ship
-inside a **distributed commercial data product**, the share-alike clause can attach. The
-"insubstantial extract vs. derivative database" line is legally fuzzy. **Overture** is
-OSM-lineage but relicensed **CDLA-Permissive 2.0** (no share-alike, attribution only) — safe
-to redistribute in a commercial CoreLogic product, so it replaces raw OSM for the permeability
-metric.
+Internal feature computation is generally fine, but once derived roadway columns ship inside a
+**distributed commercial data product**, the share-alike clause can attach, and the
+"insubstantial extract vs. derivative database" line is legally fuzzy.
 
-**Technical notes for the build (from the data-source review):**
+**Correction (Overture).** An earlier draft of this doc chose Overture for permeability on the
+belief that it is relicensed CDLA-Permissive 2.0. That is wrong for the **transportation**
+theme: every segment's `sources[].license` field reads `ODbL-1.0` (OpenStreetMap, plus a
+small TomTom contribution also under ODbL — checked on the 2026-09-23.0 release). CDLA applies
+to other Overture themes, not roads. Overture was therefore dropped and intersection density
+rebuilt from TIGER EDGES; the cached Overture parquets were deleted.
 
-- TIGER ROADS: per-county zip `tl_<YYYY>_<5-digit county FIPS>_roads.zip` (all roads incl.
-  `S1630` ramps); PRISECROADS: per-state `tl_<YYYY>_<2-digit state FIPS>_prisecroads.zip`
-  (`S1100`+`S1200` only). Base: `https://www2.census.gov/geo/tiger/TIGER<YYYY>/ROADS/`.
-  Vintage 2024 fully populated; 2025 exists. `pygris.roads(state, county, year=...)` wraps
-  these URLs.
-- MTFCC road codes: `S1100` primary/interstate, `S1200` secondary/arterial, `S1400` local,
-  **`S1630` ramp**, `S1640` service/frontage. **No explicit "interchange" feature** — an
-  interchange is a *cluster of `S1630` segments* off an `S1100`; derive interchange count by
-  clustering `S1630` centroids if needed.
-- **CRS:** TIGER native is EPSG:4269 (NAD83, degrees). **Reproject to EPSG:5070 (CONUS
-  Albers, meters)** before any distance / length / density math — same equal-area CRS already
-  used for transit density (`_EQUAL_AREA_CRS`).
-- Overture transportation theme ships as **GeoParquet** on cloud storage; filter to the
-  connector/segment topology for intersection nodes. Attribution: OpenStreetMap contributors +
-  Overture.
+**Technical notes for the build:**
+
+- TIGER ROADS / EDGES: per-county zips `tl_<YYYY>_<county FIPS>_{roads,edges}.zip` under
+  `https://www2.census.gov/geo/tiger/TIGER<YYYY>/{ROADS,EDGES}/`. Vintage 2024.
+- MTFCC road codes: `S1100` primary/interstate, `S1200` secondary (numbered highways only),
+  `S1400` local/city street, **`S1630` ramp**, `S1640` service/frontage. **No explicit
+  "interchange" feature** — an interchange is a *cluster of `S1630` features* off an `S1100`;
+  derive interchange count by clustering `S1630` centroids if needed.
+- HPMS: one public ArcGIS FeatureServer per state,
+  `https://geo.dot.gov/server/rest/services/Hosted/HPMS_FULL_<ST>_2024/FeatureServer/0`
+  (all 16 model-city states present). Queried per county, filtered server-side to
+  `f_system IN (1,2,3,4) AND facility_type IN (1,2)` and paged (2,000-record limit).
+  `facility_type = 6` ("non-inventory direction") is the mirrored opposite carriageway of a
+  divided road — excluded to avoid double-counting length. `county_id` is the integer county
+  FIPS. The line work's geodetic accuracy is not evaluated by FHWA (fine at BG scale).
+- **CRS:** TIGER native is EPSG:4269; HPMS is requested in EPSG:4326. **Reproject to
+  EPSG:5070 (CONUS Albers, meters)** before any distance / length / density math — same
+  equal-area CRS used for transit density (`_EQUAL_AREA_CRS`).
 - BG polygons: reuse the shared `load_state_block_groups` foundation (same as transit/crime).
 
 ---
@@ -180,10 +202,12 @@ metric.
 
 **Planned (this doc):**
 
-- [ ] Scaffold `data_wrangling/roadway/` (loaders for TIGER `S1630`/`S1100`/`S1200`;
-      Overture connector nodes; BG aggregation) + `FeatureSource` + constants group.
-- [ ] Build the 5 candidate raw features for the existing model cities; cache to
+- [x] Scaffold `data_wrangling/roadway/` (`tiger.py`: ROADS `S1630`/`S1100` + EDGES junctions;
+      `hpms.py`: FHWA functional class; `build.py`: BG aggregation) + `FeatureSource` +
+      constants group.
+- [x] Build the 5 candidate raw features for the original 10 model cities; cache to
       `data/interim/sources/roadway.parquet`.
+- [ ] Extend the build to the 10 cities added in the 20-city expansion.
 - [ ] Distribution EDA (raw vs log; a good vs bad city) → confirm transforms + the
       `has_highway_access` threshold.
 - [ ] Correlation / redundancy pruning (`correlation_matrix`) → retained
@@ -195,7 +219,7 @@ metric.
 **Deferred / backlog:**
 
 - [ ] **AADT / traffic-exposure feature** (`roadway_aadt_near`) — no evidence base; revisit
-      after TIGER features validate. Source: FHWA HPMS or state DOT AADT portals.
+      after the current features validate. Data is already in the HPMS pull (`aadt`).
 - [ ] Interchange-cluster count (DBSCAN over `S1630` centroids) if raw ramp density proves
       noisy.
 - [ ] Road × neighborhood-context interaction (Hipp 2022 moderation finding).
@@ -212,5 +236,5 @@ metric.
 - Hipp et al. (2022), *Criminology & Criminal Justice* — disadvantage moderation. `10.1177/17488958221132764`
 - Brantingham & Brantingham (1993/1995) — crime pattern theory (nodes / paths / edges), foundational.
 
-Data: US Census TIGER/Line Roads (MTFCC `S1630`/`S1100`/`S1200`, public domain); Overture Maps
-transportation theme (CDLA-Permissive 2.0). Deferred: FHWA HPMS / state DOT AADT.
+Data: US Census TIGER/Line ROADS (MTFCC `S1630`/`S1100`) and EDGES (junction topology), public
+domain; FHWA HPMS 2024 (functional class `f_system`, AADT), US federal publication.
