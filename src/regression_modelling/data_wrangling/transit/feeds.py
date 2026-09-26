@@ -32,9 +32,17 @@ from regression_modelling.constants import TRANSIT_FEEDS, TRANSIT_REPRESENTATIVE
 OVERNIGHT_START_H = 0
 OVERNIGHT_END_H = 5
 
-# Two stops within this distance are treated as the same physical station when
-# deduping across operators (e.g. BART + Muni share Embarcadero/Civic Center/Powell).
+# Cross-operator merge rules (see _dedup_shared_stations). Two stops from different feeds
+# are the same physical stop when: both are rail stations within SHARED_STATION_M that are
+# each other's nearest cross-operator rail station (mutual nearest — so Market St surface
+# streetcar stops don't chain onto BART; e.g. BART + Muni Metro at Embarcadero); or they share a stop_id within
+# SHARED_STATION_M (NYCT borough bus feeds reuse one stop namespace); or they sit within
+# SAME_STOP_M of each other. The last two apply only bus<->bus / rail<->rail, so a bus stop
+# at a station entrance stays its own stop. Bus stops 10-120 m apart are distinct corners.
 SHARED_STATION_M = 120.0
+SAME_STOP_M = 10.0
+# GTFS route_type codes treated as rail/fixed-guideway stations.
+RAIL_ROUTE_TYPES = frozenset({0, 1, 2, 5, 6, 7, 12})
 
 _SECONDS_PER_DAY = 24 * 3600
 
@@ -280,32 +288,81 @@ def load_city_stops(city: str, refresh: bool = False) -> pd.DataFrame:
     return stops
 
 
+def _mutual_nearest_rail_pairs(pts: np.ndarray, agency: np.ndarray,
+                               is_rail: np.ndarray) -> list[tuple[int, int]]:
+    """(i, j) rail stops of different agencies within SHARED_STATION_M that are each
+    other's nearest rail stop in the other agency."""
+    rail = np.flatnonzero(is_rail)
+    nearest: dict[tuple[int, str], int] = {}
+    for ag in np.unique(agency[rail]):
+        tgt = rail[agency[rail] == ag]
+        src = rail[agency[rail] != ag]
+        if not len(tgt) or not len(src):
+            continue
+        d, k = cKDTree(pts[tgt]).query(pts[src], distance_upper_bound=SHARED_STATION_M)
+        for s_idx, dd, kk in zip(src, d, k):
+            if np.isfinite(dd):
+                nearest[(int(s_idx), ag)] = int(tgt[kk])
+    return [(i, j) for (i, ag), j in nearest.items()
+            if i < j and nearest.get((j, agency[i])) == i]
+
+
 def _dedup_shared_stations(stops: pd.DataFrame) -> pd.DataFrame:
-    """Drop cross-operator duplicate stations that sit within ``SHARED_STATION_M``.
+    """Merge the same physical stop listed by more than one feed (rules above).
 
-    Keeps the higher-service row (more trips/day) of each shared pair and unions the
-    route_types so mode diversity is preserved. Approximate metric distance via a local
-    equirectangular projection — adequate at ~100m scales.
+    Candidate pairs (different agencies, within ``SHARED_STATION_M``) that satisfy a merge
+    rule are unioned into clusters; each cluster becomes one row located at its busiest
+    member, with service SUMMED (trips, routes) since feeds carry distinct trips, span
+    widened, overnight OR-ed and route_types unioned. Approximate metric distance via a
+    local equirectangular projection — adequate at ~100m scales.
     """
-
     df = stops.reset_index(drop=True)
     lat0 = np.radians(df["stop_lat"].mean())
     x = np.radians(df["stop_lon"].to_numpy()) * np.cos(lat0) * 6_371_000.0
     y = np.radians(df["stop_lat"].to_numpy()) * 6_371_000.0
     pts = np.column_stack([x, y])
 
-    tree = cKDTree(pts)
-    pairs = tree.query_pairs(SHARED_STATION_M)
-    drop: set[int] = set()
+    agency = df["agency"].to_numpy()
+    stop_id = df["stop_id"].astype(str).to_numpy()
+    is_rail = df["route_types"].map(lambda t: bool(set(t) & RAIL_ROUTE_TYPES)).to_numpy()
+
+    parent = np.arange(len(df))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    pairs = []
+    for i, j in cKDTree(pts).query_pairs(SHARED_STATION_M):
+        if agency[i] != agency[j] and is_rail[i] == is_rail[j] and (
+                float(np.hypot(*(pts[i] - pts[j]))) <= SAME_STOP_M or stop_id[i] == stop_id[j]):
+            pairs.append((i, j))
+    pairs += _mutual_nearest_rail_pairs(pts, agency, is_rail)
     for i, j in pairs:
-        if df.at[i, "agency"] == df.at[j, "agency"]:
-            continue
-        keep, other = (i, j) if df.at[i, "n_trips_day"] >= df.at[j, "n_trips_day"] else (j, i)
-        if keep in drop:
-            keep, other = other, keep
-        df.at[keep, "route_types"] = df.at[keep, "route_types"] | df.at[other, "route_types"]
-        df.at[keep, "n_routes"] = len(df.at[keep, "route_types"])
-        drop.add(other)
-    if drop:
-        print(f"  deduped {len(drop)} shared cross-operator station(s)")
-    return df.drop(index=list(drop)).reset_index(drop=True)
+        parent[find(i)] = find(j)
+    n_pairs = len(pairs)
+    if not n_pairs:
+        return df
+
+    df["_cluster"] = [find(i) for i in range(len(df))]
+    sizes = df["_cluster"].map(df["_cluster"].value_counts())
+    singles = df[sizes == 1].drop(columns="_cluster")
+    multi = df[sizes > 1].sort_values("n_trips_day", ascending=False)
+
+    def _merge(g: pd.DataFrame) -> pd.Series:
+        top = g.iloc[0].copy()
+        top["n_trips_day"] = g["n_trips_day"].sum()
+        top["n_routes"] = g["n_routes"].sum()
+        top["first_dep_s"] = g["first_dep_s"].min()
+        top["last_dep_s"] = g["last_dep_s"].max()
+        top["span_hours"] = (top["last_dep_s"] - top["first_dep_s"]) / 3600.0
+        top["overnight_flag"] = int(g["overnight_flag"].max())
+        top["route_types"] = frozenset().union(*g["route_types"])
+        return top
+
+    merged = pd.DataFrame([_merge(g) for _, g in multi.groupby("_cluster", sort=False)])
+    merged = merged.drop(columns="_cluster")
+    print(f"  merged {len(multi)} cross-operator rows into {len(merged)} shared stop(s)")
+    return pd.concat([singles, merged], ignore_index=True)

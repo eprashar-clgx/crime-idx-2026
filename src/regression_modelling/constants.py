@@ -26,7 +26,8 @@ class TransitFeed:
 
 # Per-city GTFS feeds, keyed by the same keys as CITIES (crime_blockgroup_mapping).
 # One representative mid-2025 snapshot per feed (record feed_version on download).
-# SF unions Muni + BART; shared stations are deduped by proximity in feeds.load_city_stops.
+# Multi-feed cities are unioned; the same physical stop listed by several feeds is merged
+# (service summed) in feeds._dedup_shared_stations.
 TRANSIT_FEEDS = {
     "chicago":       (TransitFeed("cta",   "mdb-389"),),
     "houston":       (TransitFeed("metro", "mdb-2060"),),
