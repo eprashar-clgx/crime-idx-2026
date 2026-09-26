@@ -28,7 +28,7 @@ from regression_modelling.data_wrangling.roadway.tiger import (
     load_roads_for_counties, load_junctions_for_counties, MTFCC_RAMP, MTFCC_INTERSTATE,
 )
 from regression_modelling.data_wrangling.roadway.hpms import (
-    load_hpms_for_counties, F_SYSTEM_ARTERIAL,
+    load_hpms_for_counties, F_SYSTEM_ARTERIAL, FACILITY_MAINLINE,
 )
 
 _EQUAL_AREA_CRS = "EPSG:5070"
@@ -72,7 +72,7 @@ def build_roadway(city: str, refresh: bool = False) -> pd.DataFrame:
     # HPMS principal + minor arterials only: interstates/freeways (f_system 1-2) are already
     # captured by nearest_interstate_m, so excluding them keeps R1 and R2 separable.
     hpms = load_hpms_for_counties(counties, refresh=refresh)
-    arterials = hpms[hpms["f_system"].isin(F_SYSTEM_ARTERIAL)]
+    arterials = hpms[hpms["f_system"].isin(F_SYSTEM_ARTERIAL) & hpms["facility_type"].isin(FACILITY_MAINLINE)]
     print(f"roadway[{city}]: {len(arterials):,} HPMS arterial sections (f_system 3-4)")
 
     centroids = bg_city.copy()

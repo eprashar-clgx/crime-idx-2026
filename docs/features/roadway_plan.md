@@ -171,6 +171,18 @@ rebuilt from TIGER EDGES; the cached Overture parquets were deleted.
   `facility_type = 6` ("non-inventory direction") is the mirrored opposite carriageway of a
   divided road — excluded to avoid double-counting length. `county_id` is the integer county
   FIPS. The line work's geodetic accuracy is not evaluated by FHWA (fine at BG scale).
+  Ramps (`facility_type = 4`) are also pulled, **spatially** (county mainline bbox + ~2 km),
+  because IL, TX, OH, MO and WA leave `county_id` null on ramps. Fields cached per section:
+  `aadt`, `aadt_single_unit`, `aadt_combination`, `through_lanes`, `speed_limit`,
+  `access_control`, `nhs`.
+- **TIGER vs HPMS for R1 (10-city check, 2026-09).** TIGER `S1100` ≈ HPMS `f_system` 1–2
+  (freeways incl. non-Interstate; per-city ρ 0.89–1.00), so `nearest_interstate_m` is really
+  "nearest limited-access freeway". HPMS ramp inventory is **incomplete** in some states
+  (BGs with a ramp: Houston 11% vs TIGER 32%, SF 2% vs 12%, Pittsburgh 16% vs 25%), and crime
+  ρ is equal or slightly weaker than TIGER → R1 stays on TIGER. HPMS traffic metrics:
+  arterial lane-km density ≈ arterial density (ρ 0.96, same crime ρ); arterial VMT density
+  (ρ 0.90) is weaker (median 0.27 vs 0.31); freeway VMT / truck VMT / max AADT track ramp
+  count (ρ 0.55–0.73) and are weaker (0.15–0.20). None promoted.
 - **CRS:** TIGER native is EPSG:4269; HPMS is requested in EPSG:4326. **Reproject to
   EPSG:5070 (CONUS Albers, meters)** before any distance / length / density math — same
   equal-area CRS used for transit density (`_EQUAL_AREA_CRS`).
