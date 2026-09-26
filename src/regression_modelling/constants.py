@@ -39,6 +39,25 @@ TRANSIT_FEEDS = {
     "sacramento":    (TransitFeed("sacrt", "mdb-2137"),),
     "detroit":       (TransitFeed("ddot",  "mdb-464"),),
     "columbus":      (TransitFeed("cota",  "mdb-404"),),
+    # Expansion cities. Same rule as above: in-city bus + rapid transit / light rail;
+    # commuter rail and commuter bus excluded (cf. CTA without Metra).
+    "philadelphia":  (TransitFeed("septa_bus", "mdb-502"),),      # bus + trolley + MFL/BSL; Regional Rail excluded
+    "milwaukee":     (TransitFeed("mcts",      "mdb-2127"),),
+    "baltimore":     (TransitFeed("mta_bus",   "mdb-466"), TransitFeed("mta_lrt", "mdb-469"),
+                      TransitFeed("mta_metro", "mdb-470")),      # MARC + commuter bus excluded
+    # WMATA: key-free MDB mirror is a Sep-Dec 2024 snapshot (producer feed needs an API key).
+    "dc":            (TransitFeed("wmata_bus", "mdb-1846"), TransitFeed("wmata_rail", "mdb-1847")),
+    # AC Transit: current feed (mdb-2455) needs an API token and its MDB mirror 404s, so this
+    # uses the deprecated mdb-1244 mirror (service Dec 2023 - Mar 2024).
+    "oakland":       (TransitFeed("ac_transit", "mdb-1244"), TransitFeed("bart", "mdb-53")),
+    "new_york":      (TransitFeed("nyct_subway", "mdb-516"),
+                      TransitFeed("nyct_bus_bk", "mdb-512"), TransitFeed("nyct_bus_mn", "mdb-513"),
+                      TransitFeed("nyct_bus_si", "mdb-514"), TransitFeed("nyct_bus_qn", "mdb-520"),
+                      TransitFeed("nyct_bus_bx", "mdb-528"), TransitFeed("mta_bus_co",  "mdb-510")),
+    "dallas":        (TransitFeed("dart",      "mdb-152"),),
+    "denver":        (TransitFeed("rtd",       "mdb-178"),),
+    "las_vegas":     (TransitFeed("rtc",       "mdb-2351"),),
+    "seattle":       (TransitFeed("kcm",       "mdb-1330"), TransitFeed("sound_transit", "mdb-268")),
 }
 
 # Representative service date to pin trips/day and service span (a typical Wednesday,
