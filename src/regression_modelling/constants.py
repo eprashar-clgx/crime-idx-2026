@@ -66,7 +66,18 @@ FEATURE_SOURCES = {
         backend="bq",
         location="foreclosures",     # → sql/pull/foreclosures.sql
         key_col="geoid",
+        # % of the BG's TRANSACTED properties (2020-2024) that were foreclosed — denominator
+        # is the transactions universe, so this is distress-among-sales, not turnover.
         feature_cols=("clip_foreclosure_pct", "clip_foreclosure_pct_lag6"),
+    ),
+    # Share of properties with ANY recorded transaction 2020-2024 (all deed categories) —
+    # a property-record residential-turnover / instability measure (not ACS-demographic).
+    "transactions": FeatureSource(
+        name="transactions",
+        backend="bq",
+        location="transactions",     # → sql/pull/transactions.sql
+        key_col="geoid",
+        feature_cols=("clip_transaction_pct", "clip_transaction_pct_lag6"),
     ),
     "convenience_stores": FeatureSource(
         name="convenience_stores",
@@ -221,33 +232,39 @@ PROPERTY_PREDICTORS = [
     "vacant_pct",
     "clip_liens_pct",
     "clip_foreclosure_pct",
+    "clip_transaction_pct",
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
 ]
 
-# KNN(6) spatial-lag columns: the within-state 6-nearest-neighbour mean of the RAW pct
-# (self excluded), computed in BigQuery (data_wrangling/sql/build/{vacancy,liens,
-# foreclosures}.sql). They capture the surrounding neighbourhood's distress level so the
+# KNN(6) POOLED spatial-lag columns: over the within-state 6 nearest neighbours (self
+# excluded), SUM(neighbour numerators) / SUM(neighbour denominators) — not the mean of
+# neighbour rates — computed in BigQuery (data_wrangling/sql/build/{vacancy,liens,
+# foreclosures,transactions}.sql; rationale in docs/features/property_distress.md §2). They
+# capture the surrounding neighbourhood's distress level so the
 # fit sees a transferable spatial gradient, not city-specific coordinates. Present only
 # after the BQ ingestion is re-run; the pipeline skips them until then.
 PROPERTY_LAG_COLS = [
     "vacant_pct_lag6",
     "clip_liens_pct_lag6",
     "clip_foreclosure_pct_lag6",
+    "clip_transaction_pct_lag6",
 ]
 
-# Functional form for property predictors in modeling/EDA. The three distress shares
-# (vacancy, liens, foreclosures) and their spatial lags are right-skewed → log1p into
+# Functional form for property predictors in modeling/EDA. The distress/turnover shares
+# (vacancy, liens, foreclosures, transactions) and their spatial lags are right-skewed → log1p into
 # `{col}_log`; the POI store counts stay raw. Consumed by apply_transforms (no has_transit
 # indicator / hurdle — those are transit-only).
 PROPERTY_MODEL_TRANSFORMS = {
     "vacant_pct":                 "log1p",
     "clip_liens_pct":             "log1p",
     "clip_foreclosure_pct":       "log1p",
+    "clip_transaction_pct":       "log1p",
     "vacant_pct_lag6":            "log1p",
     "clip_liens_pct_lag6":        "log1p",
     "clip_foreclosure_pct_lag6":  "log1p",
+    "clip_transaction_pct_lag6":  "log1p",
 }
 
 # Retained property predictors in model form (what actually enters PREDICTOR_COLS): the
@@ -257,12 +274,14 @@ PROPERTY_MODEL_PREDICTORS = [
     "vacant_pct_log",
     "clip_liens_pct_log",
     "clip_foreclosure_pct_log",
+    "clip_transaction_pct_log",
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
     "vacant_pct_lag6_log",
     "clip_liens_pct_lag6_log",
     "clip_foreclosure_pct_lag6_log",
+    "clip_transaction_pct_lag6_log",
 ]
 
 # transit (GTFS) — non-geo supply/exposure + overnight features, POC cities only.
@@ -408,9 +427,11 @@ ZERO_FILL = [
     "vacant_pct",
     "clip_liens_pct",
     "clip_foreclosure_pct",
+    "clip_transaction_pct",
     "vacant_pct_lag6",              # spatial lags: 0 = no distress in the neighbourhood
     "clip_liens_pct_lag6",
     "clip_foreclosure_pct_lag6",
+    "clip_transaction_pct_lag6",
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",

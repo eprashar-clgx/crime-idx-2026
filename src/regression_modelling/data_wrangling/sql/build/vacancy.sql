@@ -40,12 +40,16 @@ base AS (
   FROM bg_addr a
   LEFT JOIN bg_geo c ON a.census_block_group_geoid = c.geoid
 ),
--- KNN(6) spatial lag: each BG's 6 nearest neighbours WITHIN THE SAME STATE (self excluded).
+-- KNN(6) POOLED spatial lag: each BG's 6 nearest neighbours WITHIN THE SAME STATE (self
+-- excluded), combined as SUM(neighbour numerators) / SUM(neighbour denominators) rather than
+-- the mean of neighbour rates, so a neighbour with a tiny denominator (e.g. 1 of 2 sales)
+-- cannot dominate the lag. See docs/features/property_distress.md.
 -- The 25km ST_DWITHIN prefilter prunes the candidate set (enables BQ's spatial join
 -- optimization) while comfortably covering the 6 nearest neighbours in populated areas.
 neighbors AS (
   SELECT b.census_block_group_geoid AS geoid,
-         n.vacant_pct AS nbr_pct,
+         n.vacant_addr AS nbr_num,
+         n.total_addr AS nbr_den,
          ROW_NUMBER() OVER (PARTITION BY b.census_block_group_geoid
                             ORDER BY ST_DISTANCE(b.centroid, n.centroid)) AS rnk
   FROM base b
@@ -55,7 +59,7 @@ neighbors AS (
    AND ST_DWITHIN(b.centroid, n.centroid, 25000)
 ),
 lag AS (
-  SELECT geoid, AVG(nbr_pct) AS vacant_pct_lag6
+  SELECT geoid, 100 * SAFE_DIVIDE(SUM(nbr_num), SUM(nbr_den)) AS vacant_pct_lag6
   FROM neighbors
   WHERE rnk <= 6
   GROUP BY 1

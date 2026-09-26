@@ -84,7 +84,7 @@ need an address-geocoding step before they fit this pipeline, which is a bigger 
 
 | Dataset | Path | Produced by | Consumed by | Purpose |
 |---|---|---|---|---|
-| Per-source pulls | `interim/sources/{name}.parquet` | `regression_modelling.data_wrangling.sources.pull_source` | `features.assemble_features` | Cached BQ/GCS predictor sources (vacancy, liens, foreclosures, seven_eleven, gas_stations, liquor_stores, demographic) |
+| Per-source pulls | `interim/sources/{name}.parquet` | `regression_modelling.data_wrangling.sources.pull_source` | `features.assemble_features` | Cached BQ/GCS predictor sources (vacancy, liens, foreclosures, transactions, seven_eleven, gas_stations, liquor_stores, demographic) |
 | Transit BG features | `interim/sources/transit.parquet` | `regression_modelling.data_wrangling.transit.build_all_transit` | `features.assemble_features` (`transit` FeatureSource, `backend="file"`) | GTFS-derived BG transit predictors for all registered transit cities (5 POC + Jacksonville/Kansas City/Sacramento; stop density, service intensity, overnight, risky co-location, H3). Built out-of-band; see ADR 0002. |
 | Transit per-stop cache | `interim/transit/stops/{city}.parquet` | `regression_modelling.data_wrangling.transit.feeds.load_city_stops` | `transit.build.build_transit` | Per-stop feature intermediate (span, overnight, trips/day, route types) before BG aggregation |
 | BG predictor matrix | `interim/features/bg_predictors.parquet` | `features.assemble_features` | `data_wrangling.dataset.build_model_table` | National BG feature spine ⋈ all registry sources |

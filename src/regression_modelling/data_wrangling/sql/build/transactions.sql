@@ -1,14 +1,10 @@
-CREATE OR REPLACE TABLE `{bq_project}.{staging_dataset}.bg_clip_liens` AS
-WITH clip_liens AS (
-  SELECT DISTINCT CAST(clip AS STRING) AS clip
-  FROM `{idap_project}.edr_ent_property_transactions.vw_involuntary_liens_lien`
-  WHERE category_type = 'J'                       -- J = lien, R = release
-    AND clip IS NOT NULL                          -- keep only clipped records
-    AND EXTRACT(YEAR FROM lien_date) >= 2020     -- 5 years (2020-2024), matching foreclosures/transactions
-    AND EXTRACT(YEAR FROM lien_date) <  2025
-    AND type_of_tax IN ('DELINQUENT TAX', 'PERSONAL PROPERTY TAX',
-                        'POSTPONED PROPERTY TAX', 'UNSECURED PROPERTY (TAXES)')
-    AND lien_amount >= 100
+CREATE OR REPLACE TABLE `{bq_project}.{staging_dataset}.bg_clip_transactions` AS
+WITH clip_transactions AS (
+  SELECT DISTINCT CAST(puid AS STRING) AS puid
+  FROM `{idap_project}.edr_ent_property_fulfillment.vw_transaction_v1`
+  WHERE puid IS NOT NULL                                     -- keep only clipped records; all deed categories
+    AND SAFE.PARSE_DATE('%Y%m%d', CAST(recordingdt AS STRING)) >= DATE '2020-01-01'-- 5 years (2020-2024)
+    AND SAFE.PARSE_DATE('%Y%m%d', CAST(recordingdt AS STRING)) <  DATE '2025-01-01'
 ),
 clip_bg AS (
   -- property (clip) universe: explode the pipe-delimited clip_list so the denominator counts
@@ -27,15 +23,15 @@ bg_geo AS (
   FROM `{bq_project}.{boundary_dataset}.census_blockgroup`
   QUALIFY ROW_NUMBER() OVER (PARTITION BY GEOID ORDER BY geometry IS NOT NULL DESC) = 1
 ),
-bg_liens AS (
-  -- share of properties (clips) in the BG with a tax lien
+bg_transactions AS (
+  -- share of properties (clips/puids) in the BG with any recorded transaction
   SELECT a.census_block_group_geoid,
-         COUNT(DISTINCT a.clip)      AS total_clips,
-         COUNT(DISTINCT b.clip)      AS clip_w_liens,
-         ROUND(100 * SAFE_DIVIDE(COUNT(DISTINCT b.clip),
-                                 COUNT(DISTINCT a.clip)), 2) AS clip_liens_pct
+         COUNT(DISTINCT a.clip)      AS total_unq_clips,
+         COUNT(DISTINCT b.puid)      AS unq_clip_w_transaction,
+         ROUND(100 * SAFE_DIVIDE(COUNT(DISTINCT b.puid),
+                                 COUNT(DISTINCT a.clip)), 2) AS clip_transaction_pct
   FROM clip_bg a
-  LEFT JOIN clip_liens b ON a.clip = b.clip
+  LEFT JOIN clip_transactions b ON a.clip = b.puid
   GROUP BY 1
 ),
 base AS (
@@ -43,7 +39,7 @@ base AS (
          LEFT(a.census_block_group_geoid, 2) AS statefp,
          c.geometry,
          ST_CENTROID(c.geometry) AS centroid
-  FROM bg_liens a
+  FROM bg_transactions a
   LEFT JOIN bg_geo c ON a.census_block_group_geoid = c.geoid
 ),
 -- KNN(6) POOLED spatial lag: each BG's 6 nearest neighbours WITHIN THE SAME STATE (self
@@ -54,8 +50,8 @@ base AS (
 -- optimization) while comfortably covering the 6 nearest neighbours in populated areas.
 neighbors AS (
   SELECT b.census_block_group_geoid AS geoid,
-         n.clip_w_liens AS nbr_num,
-         n.total_clips AS nbr_den,
+         n.unq_clip_w_transaction AS nbr_num,
+         n.total_unq_clips AS nbr_den,
          ROW_NUMBER() OVER (PARTITION BY b.census_block_group_geoid
                             ORDER BY ST_DISTANCE(b.centroid, n.centroid)) AS rnk
   FROM base b
@@ -65,12 +61,12 @@ neighbors AS (
    AND ST_DWITHIN(b.centroid, n.centroid, 25000)
 ),
 lag AS (
-  SELECT geoid, ROUND(100 * SAFE_DIVIDE(SUM(nbr_num), SUM(nbr_den)), 2) AS clip_liens_pct_lag6
+  SELECT geoid, ROUND(100 * SAFE_DIVIDE(SUM(nbr_num), SUM(nbr_den)), 2) AS clip_transaction_pct_lag6
   FROM neighbors
   WHERE rnk <= 6
   GROUP BY 1
 )
 SELECT b.* EXCEPT (centroid),
-       l.clip_liens_pct_lag6
+       l.clip_transaction_pct_lag6
 FROM base b
 LEFT JOIN lag l ON b.census_block_group_geoid = l.geoid

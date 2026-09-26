@@ -64,6 +64,23 @@ def run_bq_build_store(store: str) -> None:
     _bq_client().query(sql).result()
 
 
+def run_bq_build_store_points(store: str) -> None:
+    """Materialize a store POI point table (`{store}_points`) via sql/build/store_points.sql.
+
+    Same STORE_DEFS universe as `run_bq_build_store`, geocoded with EAP lat/lon from
+    clip_address_xref. NOTE: prd tables — run where reachable (or paste the rendered SQL
+    into the BQ console).
+    """
+    from regression_modelling.constants import STORE_DEFS
+    sql = load_sql("store_points", "build", store=store, match_predicate=STORE_DEFS[store])
+    _bq_client().query(sql).result()
+
+
+def run_bq_pull_store_points(store: str) -> pd.DataFrame:
+    """Pull a materialized `{store}_points` table: clip_id, geoid, lat, lon."""
+    return _bq_client().query(load_sql("store_points", "pull", store=store)).to_dataframe()
+
+
 def run_bq_build_imagery() -> None:
     """Materialize the national BG Vexcel imagery table via sql/build/imagery.sql.
 

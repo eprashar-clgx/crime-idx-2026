@@ -8,11 +8,13 @@ in the normal pull path triggers it (see docs/adr/0002-gtfs-transit-ingestion.md
 Reuses the shared foundation for the spatial join (same pattern as crime ingestion):
 `load_state_block_groups` + `label_bgs_within_city`, then sjoin stops within BG polygons.
 
-Risky-facility points (H1/H3) come from the same firmographics CLIP source as the
-`convenience_stores`/`liquor_stores` FeatureSources, but pulled as points (parcel
-centroids) rather than BG counts. Those pulls need BigQuery credentials; when they are
-unavailable the build still emits the supply-side features and leaves the H1/H3 columns
-at zero (a printed note flags the skip).
+Risky-facility points (H1/H3) use the same STORE_DEFS firmographics universe as the
+`convenience_stores`/`liquor_stores` FeatureSources, materialized as EAP-geocoded point
+tables (`{store}_points`, sql/build/store_points.sql) and pulled as lat/lon. Categories
+without a STORE_DEFS universe (ATM) fall back to the exploratory parcel-centroid pull.
+Those pulls need BigQuery credentials; when they are unavailable the build still emits
+the supply-side features and leaves the H1/H3 columns at zero (a printed note flags the
+skip).
 """
 from __future__ import annotations
 
@@ -35,7 +37,8 @@ from regression_modelling.data_wrangling.transit.colocation import (
 # Equal-area CRS (CONUS Albers) for BG area / density in km^2.
 _EQUAL_AREA_CRS = "EPSG:5070"
 
-# Risky co-location category -> StoreQuery name in distributions.eda.STORE_QUERIES.
+# Risky co-location category -> store stem: STORE_DEFS key (EAP point table) where one
+# exists, else a StoreQuery name in distributions.eda.STORE_QUERIES (ATM fallback).
 _FACILITY_STORE = {"convenience": "convenience_stores", "liquor": "liquor_stores", "atm": "atm"}
 
 
@@ -48,20 +51,28 @@ def _stops_to_gdf(stops: pd.DataFrame) -> gpd.GeoDataFrame:
 def load_facility_points(category: str, refresh: bool = False) -> pd.DataFrame:
     """Risky-facility point layer (lat/lon) for one category, cached to interim.
 
-    Pulls firmographics parcel geometries via `distributions.eda.store_points` and reduces
-    each parcel to its centroid. Caches to data/interim/transit/facilities/{category}.parquet
-    so subsequent builds run offline.
+    Categories backed by a STORE_DEFS universe (convenience, liquor) pull the EAP-geocoded
+    `{store}_points` table (build it first: sql/build/store_points.sql). Others (ATM) fall
+    back to the exploratory firmographics parcel pull, reduced to parcel centroids. Caches
+    to data/interim/transit/facilities/{category}.parquet so subsequent builds run offline.
     """
     cache = transit_facilities_parquet(category)
     if cache.exists() and not refresh:
         return pd.read_parquet(cache)
 
-    from regression_modelling.distributions.eda import store_points
+    from regression_modelling.constants import STORE_DEFS
 
-    raw = store_points(_FACILITY_STORE[category])
-    geom = gpd.GeoSeries.from_wkt(raw["parcel_polygon_at_eventtime"], crs="EPSG:4326")
-    cent = geom.centroid
-    out = pd.DataFrame({"clip_id": raw["clip_id"].values, "lat": cent.y.values, "lon": cent.x.values})
+    store = _FACILITY_STORE[category]
+    if store in STORE_DEFS:
+        from regression_modelling.data_wrangling.sources import run_bq_pull_store_points
+        raw = run_bq_pull_store_points(store)
+        out = raw[["clip_id", "lat", "lon"]].copy()
+    else:
+        from regression_modelling.distributions.eda import store_points
+        raw = store_points(store)
+        geom = gpd.GeoSeries.from_wkt(raw["parcel_polygon_at_eventtime"], crs="EPSG:4326")
+        cent = geom.centroid
+        out = pd.DataFrame({"clip_id": raw["clip_id"].values, "lat": cent.y.values, "lon": cent.x.values})
     out = out.dropna(subset=["lat", "lon"]).reset_index(drop=True)
     cache.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(cache)

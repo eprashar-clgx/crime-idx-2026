@@ -65,6 +65,12 @@ Phases run in dependency order; phases 1-3 loop per variable.
   homelessness per se. Dropped from `DEMOGRAPHIC_PREDICTORS`/`ACS_COLS` (also a weak feature:
   ~98%+ and near-constant, and its low tail corrupts crime counts + per-capita rate
   denominators) and added to `bias_testing.PROTECTED_ATTRIBUTES`. `PREDICTOR_COLS` now 22.
+- 2026-09-26: Reworked the property-distress builds (`liens`, `foreclosures`, new
+  `transactions`, `stores`): denominator is now **properties (exploded clips)**, not parcel
+  shapes (fixes multi-clip parcels never matching); window widened to **2020–2024**;
+  foreclosures redefined as a **share of transacted properties**; all four `*_lag6` switched
+  to a **pooled** KNN(6) lag (Σ neighbour numerators / Σ denominators). Details + rationale:
+  `docs/features/property_distress.md`. Needs BQ rebuild + `assemble_features(refresh=True)`.
 
 ## Refined 6-step plan (ACS/imagery → regression → bias) — grilled 2026-08-27
 

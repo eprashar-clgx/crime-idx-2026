@@ -62,8 +62,9 @@ effect alone.
 risky-AND-overnight), then counted per BG — not by multiplying two BG averages, which would
 falsely fire when a BG has a daytime-risky stop and a *separate* all-night stop.
 
-⚠️ The H1/H3 columns (`transit_risky_*`) are currently **zeros** — they need the BigQuery POI
-point pull (see In-Progress below). Supply + H2 features are fully populated. Expected offense
+⚠️ The H1/H3 columns (`transit_risky_*`) are **zeros until the `{store}_points` tables are
+built** and `build_all_transit()` is re-run (see In-Progress below). Supply + H2 features are
+fully populated. Expected offense
 concentration for all three hypotheses: **robbery, larceny, MVT** (property/theft, not violent).
 
 ---
@@ -96,10 +97,14 @@ Maps to `eda_plan.md` phases. Detail on gotchas and code locations follows in se
 ### In-Progress
 
 - **Risky-facility co-location (H1/H3):** `near_risky` + `risky_allnight` logic implemented in
-  `colocation.py` (`add_risky_flags`), but the POI point layer (7-11 / liquor / ATM) is pulled
-  from the firmographics CLIP source in BigQuery (`build.load_risky_facilities`) — needs
-  credentials, so H1/H3 columns are currently emitted as 0 offline. Run `build_all_transit`
-  with BQ access to populate them.
+  `colocation.py` (`add_risky_flags`). The POI point layer now comes from EAP-geocoded point
+  tables `{store}_points` (`sql/build/store_points.sql`: same `STORE_DEFS` universe as the
+  store count features, lat/lon from `clip_address_xref`, one point per clip), pulled by
+  `build.load_facility_points` via `sources.run_bq_pull_store_points` and cached to
+  `data/interim/transit/facilities/{category}.parquet`. Convenience + liquor use this path;
+  ATM (no `STORE_DEFS` universe) still falls back to the exploratory parcel-centroid pull and
+  is skipped without prd access. Build the point tables in the BQ console (prd sources), then
+  run `build_all_transit()` to populate the `transit_risky_*` columns.
 
 ### Planned
 

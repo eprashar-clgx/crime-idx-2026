@@ -7,7 +7,7 @@
 -- National scope (no FIPS filter) — same coverage as the other national BG sources.
 --
 -- Task params (filled on top of the project/dataset defaults):
---   {imagery_project}  project holding the Vexcel aerial-features view (prd)
+--   {{imagery_project}}  project holding the Vexcel aerial-features view (prd)
 CREATE OR REPLACE TABLE `{bq_project}.{staging_dataset}.bg_imagery` AS
 WITH vexcel AS (
   -- per-structure (clip) Vexcel elements pertaining to crime
