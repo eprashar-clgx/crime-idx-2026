@@ -369,7 +369,7 @@ IMAGERY_PREDICTORS = [
 
 # roadway (TIGER + FHWA HPMS) — highway-access/edge (R1), arterial (R2), permeability (R3,
 # exploratory) candidates. CANDIDATE predictors, deliberately NOT in PREDICTOR_COLS yet:
-# see docs/features/roadway_plan.md §4/§7 — pull into the feature matrix for distribution +
+# see docs/features/roadway_plan.md §4/§7/§8 — pull into the feature matrix for distribution +
 # correlation EDA first, promote a retained (functional-form) set after that (mirrors how
 # TRANSIT_PREDICTORS -> TRANSIT_MODEL_PREDICTORS worked).
 ROADWAY_PREDICTORS = [

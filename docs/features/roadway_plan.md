@@ -13,8 +13,10 @@ hurdle machinery this reuses), and `docs/hypothesis.md` (theory mapping).
 > (`pop_est_5mile_log`, density) because the literature repeatedly warns road-network effects
 > confound with population and land use.
 
-> **Status: PLANNING — no code yet.** This doc fixes the target so a build can start from a
-> settled feature list, data source, and licensing decision.
+> **Status: BUILT (candidates), not yet in the model.** Five raw `roadway_*` features are
+> built for all 20 model cities (`data_wrangling/roadway/`, `data/interim/sources/roadway.parquet`)
+> from TIGER/Line + FHWA HPMS. Univariate EDA is in §7; redundancy pruning, functional forms
+> and promotion into `PREDICTOR_COLS` are still open (§8).
 
 ---
 
@@ -121,7 +123,8 @@ so including `S1100`/`S1630` would register overpasses as false junctions.
   exact trick that made `transit_has_transit` ⟂ `service_intensity` — see `transit_stats.md`.
 - **Deferred (not in first build):** `roadway_aadt_near` (traffic exposure) — no evidence base
   (§3 gap 1). The HPMS pull already carries `aadt` on every section, so this needs no new
-  source when revisited.
+  source when revisited. A 10-city check found traffic/lane metrics redundant with
+  arterial density or ramp count and weaker (§5).
 
 Expected collinearity (to resolve with `correlation_matrix` + hurdle, as with transit): the
 distance features (ramp vs interstate) and the two density features will correlate; ramp
@@ -210,7 +213,56 @@ rebuilt from TIGER EDGES; the cached Overture parquets were deleted.
 
 ---
 
-## 7. Execution status
+## 7. Build & univariate EDA (20 cities, 2026-09-28)
+
+Built for all 20 model cities: **20,439 BGs** (same BG universe as transit), no nulls or
+non-finite values, 52 counties of TIGER ROADS/EDGES + HPMS. Crime targets from
+`data/processed/regression_modelling/{city}_model_table.parquet` (Columbus crime fixed and
+included). Spearman ρ is **within-city** (then summarised across cities), so it isn't driven
+by between-city level differences. Violent ρ uses only the 10 all-crime cities.
+
+**Crime association (Spearman, 20 cities):**
+
+| Feature | ρ vs `cl_total_rate` median [min, max] | Expected sign in | ρ property (median) | ρ violent (median, 10 cities) |
+|---|---|---|---|---|
+| `nearest_ramp_m` | −0.25 [−0.40, +0.02] | 18/20 | −0.24 | −0.11 |
+| `nearest_interstate_m` | −0.26 [−0.36, −0.02] | 20/20 | −0.23 | −0.19 |
+| `ramp_count` | +0.16 [+0.04, +0.33] | 20/20 | +0.17 | +0.07 |
+| `arterial_density` | **+0.31** [+0.11, +0.51] | 20/20 | +0.33 | +0.19 |
+| `intersection_density` | +0.15 [−0.29, +0.31] | 17/20 | +0.14 | +0.09 |
+
+- **R2 (arterials) is the strongest and most stable** — positive in every city, strongest
+  in Seattle (0.51), Oakland (0.48), Sacramento (0.42); weakest in Chicago (0.11).
+- **R1 (highway access) is consistent but weaker**, and mostly a *property*-crime signal
+  (violent ρ roughly half). Flat in Detroit, Pittsburgh, Milwaukee and New York (≈ 0).
+- **R3 (junction density) is unstable** — negative in Las Vegas (−0.29), Sacramento (−0.14)
+  and Chicago; ≈ 0 in Houston/Dallas/Denver. Matches the contested literature (§3).
+
+**Distributions (pooled; NYC is 33% of BGs):**
+
+| Feature | p50 | p90 | % zero | skew raw → log1p | Proposed form |
+|---|---|---|---|---|---|
+| `nearest_ramp_m` | 933 | 2,358 | 0% | 5.8 → −1.0 | log1p |
+| `nearest_interstate_m` | 1,153 | 3,318 | 0% | 3.3 → −0.9 | log1p |
+| `ramp_count` | 0 | 2 | **82%** | 12.3 → 2.7 | binary `has_ramp` (or hurdle) — too zero-heavy for a count |
+| `arterial_density` | 1.8 | 6.9 | 19% | 2.3 → 0.3 | log1p |
+| `intersection_density` | 85 | 190 | 1% | 1.4 → −1.6 | sqrt (skew 0.2); log over-corrects |
+
+**Redundancy (Spearman; median within-city / pooled):**
+
+- `nearest_ramp_m` ↔ `nearest_interstate_m` **0.79 / 0.80** → keep one. Interstate distance
+  has the cleaner sign (20/20) and stronger violent ρ; ramp distance is the R1 construct.
+- `ramp_count` ↔ `nearest_ramp_m` −0.60 / −0.52 → largely the same signal (a BG containing
+  a ramp is by definition close to one).
+- `arterial_density` ↔ `intersection_density` 0.28 / 0.37; arterial is ⟂ R1 (|ρ| ≤ 0.14).
+
+**Provisional retained set (pending multivariate check net of population / land use):**
+one R1 distance (log), `arterial_density` (log1p), optionally `has_ramp`; hold
+`intersection_density` as exploratory.
+
+---
+
+## 8. Execution status
 
 **Planned (this doc):**
 
@@ -219,13 +271,13 @@ rebuilt from TIGER EDGES; the cached Overture parquets were deleted.
       constants group.
 - [x] Build the 5 candidate raw features for the original 10 model cities; cache to
       `data/interim/sources/roadway.parquet`.
-- [ ] Extend the build to the 10 cities added in the 20-city expansion.
-- [ ] Distribution EDA (raw vs log; a good vs bad city) → confirm transforms + the
-      `has_highway_access` threshold.
+- [x] Extend the build to the 10 cities added in the 20-city expansion (20,439 BGs).
+- [x] Univariate distribution + crime-correlation EDA across 20 cities (§7).
+- [ ] Confirm transforms in `01_eda` (proposed in §7) + the `has_highway_access` threshold.
 - [ ] Correlation / redundancy pruning (`correlation_matrix`) → retained
       `ROADWAY_MODEL_PREDICTORS`; hurdle-decorrelate the ramp indicator vs distance.
-- [ ] **Verify the intersection-density sign** empirically (R3 is contested) before trusting
-      it; drop or keep based on stability.
+- [x] **Verify the intersection-density sign** — unstable (17/20 positive, Las Vegas −0.29);
+      held as exploratory, not in the provisional retained set.
 - [ ] Wire retained roadway features into `build_model_table` / `PREDICTOR_COLS`.
 
 **Deferred / backlog:**
@@ -238,7 +290,7 @@ rebuilt from TIGER EDGES; the cached Overture parquets were deleted.
 
 ---
 
-## 8. Key references
+## 9. Key references
 
 - Kim & Hipp (2017), *Crime & Delinquency* — interstate highways as crime edges. `10.1177/0011128716687756`
 - Mao et al. (2025), *Humanities & Social Sciences Communications* — Detroit street-network morphology. `10.1057/s41599-025-05362-1`
