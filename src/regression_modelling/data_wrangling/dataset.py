@@ -17,7 +17,7 @@ from crime_blockgroup_mapping.rates import (
 from crime_blockgroup_mapping.scores import compute_weighted_scores
 from regression_modelling.constants import (
     TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL, PROPERTY_MODEL_TRANSFORMS,
-    DEMOGRAPHIC_MODEL_TRANSFORMS, ACS_TRANSIT_MODEL_TRANSFORMS,
+    DEMOGRAPHIC_MODEL_TRANSFORMS, ACS_TRANSIT_MODEL_TRANSFORMS, ROADWAY_MODEL_TRANSFORMS,
     DIVISION_DUMMIES, APPROVED_EXISTING_PREDICTORS, AGENCY_ANCHOR_COL,
 )
 from regression_modelling.data_wrangling.features import assemble_features
@@ -98,6 +98,9 @@ def build_model_table(city: str, refresh: bool = False,
     # household share (transit_pct_log / veh0_pct_log). Skipped if the raw ACS columns are
     # absent (e.g. an older cached feature matrix); rebuild features to populate them.
     df, _ = apply_transforms(df, spec=ACS_TRANSIT_MODEL_TRANSFORMS, has_transit_from=None)
+    # roadway model form: log1p distances/densities/ramp count -> roadway_*_log
+    # (the "ours+risky+roadway" A/B set).
+    df, _ = apply_transforms(df, spec=ROADWAY_MODEL_TRANSFORMS, has_transit_from=None)
 
     # log(count + 1) targets (primary); *_rate kept as validators
     for c in count_cols:

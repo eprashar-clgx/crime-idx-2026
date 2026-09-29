@@ -139,7 +139,6 @@ FEATURE_SOURCES = {
             "transit_risky_stop_count",
             "transit_risky_stop_share",
             "transit_risky_allnight_count",
-            "transit_route_mode_diversity",
         ),
     ),
     # Imagery (Vexcel aerial structure features) — BG averages of per-structure roof/parcel
@@ -306,9 +305,10 @@ PROPERTY_MODEL_PREDICTORS = [
 
 # transit (GTFS) — non-geo supply/exposure + overnight features, POC cities only.
 # See docs/features/transit_eda_plan.md. Raw columns; functional form for modeling/EDA is
-# given by TRANSIT_MODEL_TRANSFORMS below. The risky-facility co-location (H1) + interaction
-# (H3) columns need the BigQuery POI point pull to populate (emit 0 offline) — gated here:
-#   "transit_risky_stop_count", "transit_risky_stop_share", "transit_risky_allnight_count"
+# given by TRANSIT_MODEL_TRANSFORMS below. The risky-facility columns — H1: stop within
+# RISKY_RADIUS_M (150m) of a convenience/liquor store (ATM layer not pulled); H3: risky AND
+# all-night — are built at stop level from the cached store-point layers
+# (data/interim/transit/facilities/) and are populated for all 20 cities.
 TRANSIT_PREDICTORS = [
     "transit_stop_count",
     "transit_stop_density",
@@ -316,14 +316,19 @@ TRANSIT_PREDICTORS = [
     "transit_service_intensity",
     "transit_overnight_stop_count",
     "transit_overnight_stop_share",
-    "transit_route_mode_diversity",
+    "transit_risky_stop_count",
+    "transit_risky_stop_share",
+    "transit_risky_allnight_count",
 ]
+# transit_route_mode_diversity removed (2026-09-28): nonzero in only 5.7% of pooled BGs (0% in
+# Columbus/Detroit/Milwaukee/Las Vegas, whose feeds are bus-only) — a median-0 column that
+# measures feed rail coverage more than BG exposure. Still computed by transit/build.py.
 
 # Functional form for transit predictors in modeling/EDA (see distribution EDA,
 # docs/features/transit_eda_plan.md §5). Single source of truth consumed by
 # feature_engineering.transforms.apply_transforms:
 #   "log1p"    → add a compressed `{col}_log` column (tames right-skewed counts/distance)
-#   "identity" → use the raw bounded column as-is (shares, diversity ∈ [0,1])
+#   "identity" → use the raw bounded column as-is (shares ∈ [0,1])
 # The structural zeros (stopless BGs) are split into a separate `transit_has_transit`
 # indicator (derived from transit_stop_count > 0), so "no transit" ≠ "little transit".
 # NOTE: Pearson corr/OLS see these forms directly; Spearman is transform-invariant.
@@ -334,7 +339,9 @@ TRANSIT_MODEL_TRANSFORMS = {
     "transit_service_intensity":    "log1p",
     "transit_overnight_stop_count": "log1p",
     "transit_overnight_stop_share": "identity",
-    "transit_route_mode_diversity": "identity",
+    "transit_risky_stop_count":     "log1p",
+    "transit_risky_stop_share":     "identity",
+    "transit_risky_allnight_count": "log1p",
 }
 
 # Retained transit predictors in model form (the redundancy-pruned set from the correlation
@@ -351,6 +358,14 @@ TRANSIT_MODEL_PREDICTORS = [
     "transit_service_intensity_logc",
     "transit_nearest_stop_m_log",
     "transit_overnight_stop_share",
+]
+# Risky-facility transit block (H1: stop within RISKY_RADIUS_M of a convenience/liquor store),
+# model form. Kept OUT of TRANSIT_MODEL_PREDICTORS / PREDICTOR_COLS so the baseline "ours" set is
+# unchanged; it enters only via the "ours+risky+roadway" A/B set. risky_allnight_count is left
+# out (a near-subset of risky_stop_count). GTFS-derived, so the ACS variant drops it too.
+RISKY_TRANSIT_MODEL_PREDICTORS = [
+    "transit_risky_stop_count_log",
+    "transit_risky_stop_share",
 ]
 
 # imagery (Vexcel aerial structure features) — BG averages of per-structure roof/parcel
@@ -379,6 +394,11 @@ ROADWAY_PREDICTORS = [
     "roadway_arterial_density",
     "roadway_intersection_density",
 ]
+# Roadway model form: log1p everything (distances and densities are right-skewed; ramp_count is
+# a sparse count). Applied in build_model_table; the `{col}_log` columns enter only via the
+# "ours+risky+roadway" A/B set, not PREDICTOR_COLS.
+ROADWAY_MODEL_TRANSFORMS = {c: "log1p" for c in ROADWAY_PREDICTORS}
+ROADWAY_MODEL_PREDICTORS = [f"{c}_log" for c in ROADWAY_PREDICTORS]
 
 # Active fit-set: demographic (model form: log1p population ring count) + property (model
 # form: log distress shares + spatial lags + store counts) + transit (model form) + imagery.
@@ -441,6 +461,9 @@ AGENCY_ANCHOR_COL = {"wtotal": "agency_lag_wtotal_log", "wprop": "agency_lag_wpr
 PREDICTOR_SETS = {
     "ours": list(PREDICTOR_COLS),
     "ours+approved": list(PREDICTOR_COLS) + APPROVED_EXISTING_PREDICTORS,
+    # A/B candidate: baseline "ours" + risky-facility transit + roadway (model form).
+    "ours+risky+roadway": (list(PREDICTOR_COLS) + RISKY_TRANSIT_MODEL_PREDICTORS
+                           + ROADWAY_MODEL_PREDICTORS),
 }
 
 ZERO_FILL = [
@@ -461,7 +484,9 @@ ZERO_FILL = [
     "transit_service_intensity",
     "transit_overnight_stop_count",
     "transit_overnight_stop_share",
-    "transit_route_mode_diversity",
+    "transit_risky_stop_count",
+    "transit_risky_stop_share",
+    "transit_risky_allnight_count",
     # ACS-transit variant inputs: 0 = no transit commuters / no zero-vehicle households
     "transit_pct",
     "veh0_pct",
@@ -469,9 +494,6 @@ ZERO_FILL = [
     "roadway_ramp_count",
     "roadway_arterial_density",
     "roadway_intersection_density",
-    # "transit_risky_stop_count",      # promote with the risky predictors above
-    # "transit_risky_stop_share",
-    # "transit_risky_allnight_count",
 ]                                                       # 0 = none observed
 MEDIAN_FILL = [
     "city_centers_dist", "pop_est_5mile", "pop_ch_1mile",  # 0 would be wrong

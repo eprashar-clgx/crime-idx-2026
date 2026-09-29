@@ -298,9 +298,10 @@ def demean_by_city(df: pd.DataFrame, predictors, city_col: str = "city") -> pd.D
 def predictor_set(name: str, category: str, transit: str = "gtfs") -> list[str]:
     """Materialize a named predictor set into a column list.
 
-    `name` is one of `PREDICTOR_SETS` ("ours" | "ours+approved"), optionally suffixed
-    "+agency" to append the target-paired agency anchor column — the LEVEL feature that
-    carries cross-city calibration.
+    `name` is one of `PREDICTOR_SETS` ("ours" | "ours+approved" | "ours+risky+roadway"),
+    optionally suffixed "+agency" to append the target-paired agency anchor column — the
+    LEVEL feature that carries cross-city calibration. The historical name
+    "ours+approved+agency" resolves as before.
 
     `transit` selects the deployability sub-variant (ADR 0009):
       - ``"gtfs"`` — the GTFS-derived transit block. Higher signal, but scoring a new
@@ -313,13 +314,17 @@ def predictor_set(name: str, category: str, transit: str = "gtfs") -> list[str]:
     """
     from regression_modelling.constants import (
         PREDICTOR_SETS, TRANSIT_MODEL_PREDICTORS, ACS_TRANSIT_MODEL_PREDICTORS,
-        AGENCY_ANCHOR_COL,
+        RISKY_TRANSIT_MODEL_PREDICTORS, AGENCY_ANCHOR_COL,
     )
     add_agency = name.endswith("+agency")
-    base = "ours+approved" if add_agency else name
+    base = name.removesuffix("+agency")
+    if base not in PREDICTOR_SETS:
+        raise KeyError(f"unknown predictor set {name!r}; choose from {list(PREDICTOR_SETS)} "
+                       "(optionally + '+agency')")
     preds = list(PREDICTOR_SETS[base])
     if transit == "acs":
-        preds = ([p for p in preds if p not in TRANSIT_MODEL_PREDICTORS]
+        gtfs = set(TRANSIT_MODEL_PREDICTORS) | set(RISKY_TRANSIT_MODEL_PREDICTORS)
+        preds = ([p for p in preds if p not in gtfs]
                  + list(ACS_TRANSIT_MODEL_PREDICTORS))
     if add_agency:
         preds = preds + [AGENCY_ANCHOR_COL[category]]

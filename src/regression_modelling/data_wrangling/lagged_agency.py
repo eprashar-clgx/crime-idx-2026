@@ -58,6 +58,10 @@ CITY_AKEY_OVERRIDES = {
     # the crosswalk and the old city ORI (JACKSONVILLE_FL) stopped reporting after 2020.
     # Crime for the consolidated city reports under the Sheriff's Office.
     "jacksonville": "JACKSONVILLESHERIFFSOFFICE_FL_C",
+    # Las Vegas city (32-40000) has no own police ORI: it is policed by the Las Vegas
+    # Metropolitan PD, whose jurisdiction (~1.7M) also covers unincorporated Clark County
+    # (incl. the Strip, which is outside our city boundary). Rate is LVMPD-wide, not city-only.
+    "las_vegas": "LASVEGASMETROPOLITANPOLICEDEPARTMENT_NV",
 }
 
 
