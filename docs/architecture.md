@@ -28,10 +28,10 @@ src/
     data_wrangling/                # BQ/GCS ingestion, feature assembly, feature-⋈-target join
       sources.py · features.py · dataset.py · sql/{build,pull,explore}/
     feature_engineering/           # winsorize, scale, log, spatial terms
-    distributions/                 # counts, distributions, corr, VIF; POI store-EDA (eda.py + plots.py)
-    models/                        # dataset/target, LOCO + holdout harness, metrics, baseline
+    distributions/                 # counts, distributions, corr, VIF; POI store-EDA; predictor screening (screening.py)
+    models/                        # dataset/target, LOCO + holdout harness, metrics, stepwise selection, baseline
     bias_testing/                  # predictor-vs-protected-attribute (e.g. race) checks
-    logging/                       # run / experiment logging
+    logging/                       # experiment log (experiments.py)
   carrier_eval/                    # SIDE-QUEST: evaluate the existing model vs carrier data
     config.py · constants.py
     evals.py         # load/aggregate carrier evals + merge to BG crime
@@ -146,7 +146,10 @@ flowchart TD
   - `results.py` — `FoldRun`, the result contract `training` produces and everything
     downstream consumes. Imported by both sides so neither depends on the other.
   - `metrics.py` — the metric surface (`r2_oos`, `mae`, `within_city_recall`, level
-    correlations). Reads a `FoldRun` and nothing else.
+    correlations, unrounded per-city `city_scores`). Reads a `FoldRun` and nothing else.
+  - `selection.py` — *which predictors earn their place?* Ridge-driven backward/forward
+    stepwise over `run_cv` under a paired, city-aware `StopRule`; `confirm` re-checks the
+    result with LightGBM (ADR 0010).
   - `diagnostics.py` — *why does it fit, or not?* Per-city fit decomposition,
     permutation importance, ridge coefficients, GBM gain.
   - `inference.py` — the explanatory path: standardized OLS, HC3 coefficient tables,
@@ -155,7 +158,8 @@ flowchart TD
     scores through the same rank metrics as the refresh.
 - **bias_testing** — verify predictors correlate with crime and not with protected
   attributes such as race.
-- **logging** — record run configuration and results across iterations.
+- **logging** — the experiment log: record run configuration, scores and out-of-sample
+  predictions across iterations (ADR 0010).
 
 ### carrier_eval (side-quest)
 - **evals** — load carrier evals parquet, aggregate claims/losses/exposure to BG,

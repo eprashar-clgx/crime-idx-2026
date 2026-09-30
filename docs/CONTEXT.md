@@ -51,7 +51,8 @@ Goal: predict block-group crime for POC cities. Sub-modules:
   protected attributes (e.g. race). Owns a **separate protected-attribute table**
   (`PROTECTED_ATTRIBUTES`, keyed by `geoid`, never a predictor) and reports **conditional
   association** as a human-review diagnostic (ADR 0004). Distinct from Moran's I.
-- **`logging`** — run/experiment logging.
+- **`logging`** — the **experiment log** (`experiments.py`): one summary row + out-of-sample
+  predictions per selection/tuning run, under `data/interim/experiments/` (ADR 0010).
 
 ### `carrier_eval` (side-quest)
 Goal: evaluate how well the **existing** model performs against carrier insurance
@@ -193,6 +194,30 @@ and levels badly).
   ingested per city. `ACS_TRANSIT_PREDICTOR_COLS` swaps those for commute-by-transit
   share and zero-vehicle households. The gap between the two is the price of
   deployability and should always be reported, not assumed away (ADR 0009).
+- **predictor set** — a *named* list of model-form predictor columns, resolved by
+  `predictor_set(name, target)`; a `+agency` suffix appends the target-paired lagged-agency
+  anchor. Only **promoted** sets have names: the reporting notebook (`02`) refers to sets by
+  name only, never by inline column lists.
+- **candidate set** — an unnamed predictor list composed in the selection notebook (`02a`)
+  while experimenting. A candidate becomes a predictor set only by **promotion** (added to
+  `PREDICTOR_SETS`); losing candidates are never promoted and A/B scaffolding sets are
+  retired once decided.
+- **engineered feature** — a new predictor derived from raw columns. May be prototyped in an
+  EDA notebook for plots, but enters a model run only once `build_model_table` builds it (via
+  a `*_MODEL_TRANSFORMS` spec), so selection and reporting see identical columns.
+- **experiment log** — the persistent, append-only record of every selection/tuning run: one
+  row per run (predictor list, estimator, split, parameters, code version, metrics), so
+  comparisons survive across sessions without re-fitting.
+- **screening** — model-free rules that cut candidate predictors to a shortlist before any
+  selection fit: *weak* (low, sign-unstable within-city correlation), *redundant* (highly
+  correlated with a stronger predictor), *coverage artifact* (mostly city identity, with a
+  known data-collection cause), *sparse* (almost always zero). Output is a reviewed
+  keep/drop table, not an automatic cut (ADR 0010).
+- **stepwise selection** — forward and backward search over the screened shortlist, judged
+  by the paired per-city stop rule; Ridge drives it, LightGBM confirms the result (ADR 0010).
+- **selection bias** — the optimism from choosing predictors on the same LOCO folds that are
+  later reported. Accepted and **disclosed** rather than removed (no lockbox cities — the
+  `wtotal` pool is too small to spare any); kept small by making few selection decisions.
 - **filtered geoid set** — the post-drop geoids the fit actually runs on. Spatial weights
   (Moran's I), CV folds, and the bias-testing join must all align to it, not the full
   boundary set (ADR 0003).

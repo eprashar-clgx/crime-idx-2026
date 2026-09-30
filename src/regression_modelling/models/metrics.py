@@ -151,6 +151,41 @@ def within_city_recall(run: FoldRun, category: str | None = None,
     return pd.DataFrame(rows).set_index("holdout")
 
 
+def city_scores(run: FoldRun, net: float = 0.10) -> pd.DataFrame:
+    """Unrounded per-held-out-city `r2_oos` and symmetric `recall@N`, plus a POOLED row.
+
+    The paired comparisons in `selection` difference two runs city by city, so they need
+    exact values rather than the 3-decimal display rounding of `fold_metrics` /
+    `within_city_recall`. Same definitions: `r2_oos` is y_pred vs log1p(rate); `recall@N`
+    is the share of a city's observed worst-N BGs the model also places in its own worst-N
+    (POOLED averages membership over every city's dangerous blocks). `lograte` mode only.
+    """
+    if run.mode != "lograte":
+        raise ValueError(f"city_scores needs a 'lograte' run (got {run.mode!r})")
+    rate_col = _rate_col(run.mode, run.category)
+    s = run.scored
+    y = np.log1p(s[rate_col].astype(float))
+    p = s["y_pred"].astype(float)
+
+    def _r2(idx):
+        yy, pp = y[idx], p[idx]
+        ss_tot = float(((yy - yy.mean()) ** 2).sum())
+        return 1 - float(((yy - pp) ** 2).sum()) / ss_tot if ss_tot else np.nan
+
+    rows, members = [], []
+    for city, g in s.groupby("holdout_city"):
+        obs_pct = g[rate_col].astype(float).rank(pct=True)
+        mod_pct = g["y_pred"].astype(float).rank(pct=True)
+        hit = mod_pct[obs_pct >= 1 - net] >= 1 - net
+        members.append(hit)
+        rows.append({"holdout": city, "n": len(g), "r2_oos": _r2(g.index),
+                     "recall": float(hit.mean()) if len(hit) else np.nan})
+    allhit = pd.concat(members)
+    rows.append({"holdout": "POOLED", "n": len(s), "r2_oos": _r2(s.index),
+                 "recall": float(allhit.mean())})
+    return pd.DataFrame(rows).set_index("holdout")
+
+
 def fold_metrics(run: FoldRun, x_unit: str = "population",
                  capture_at: float = 0.20) -> pd.DataFrame:
     """Per-holdout-city + pooled metrics table for any `FoldRun`.

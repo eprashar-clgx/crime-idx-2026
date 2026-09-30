@@ -33,6 +33,12 @@ def bias_parquet(name: str = "protected_attributes"):
     return INTERIM_DIR / "bias" / f"{name}.parquet"
 
 
+def experiments_dir():
+    """Experiment log root (data/interim/experiments/): one summary + one out-of-sample
+    prediction parquet per logged run (ADR 0010)."""
+    return INTERIM_DIR / "experiments"
+
+
 def transit_raw_dir(city: str):
     """Immutable downloaded GTFS feed zips for a city (data/raw/transit/{city}/).
 
