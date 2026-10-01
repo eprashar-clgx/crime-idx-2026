@@ -174,6 +174,21 @@ and levels badly).
   bias testing, never a predictor. Lives in a **separate bias-testing-only table** keyed by
   `geoid`; never in `FEATURE_SOURCES`/`PREDICTOR_COLS` (ADR 0004). Owned by
   `bias_testing.PROTECTED_ATTRIBUTES`.
+- **regulator-rejected predictor** — a variable a state Department of Insurance (DOI) has
+  objected to as a rating factor. **Never a predictor**, and must not come back as a
+  renamed or re-derived version. Known cases:
+  - **jobs within 1 mile** — total jobs in a 1-mile radius, log-transformed and
+    standardized (incumbent national model). Source thought to be ACS; to confirm, since
+    LODES WAC (jobs by workplace) is the usual jobs source. Treat any **employment or
+    jobs-count measure** as covered until confirmed: LODES `c000`, firmographic employee
+    counts, jobs shares and jobs-based ratios.
+  - **Still in use, pending confirmation:** LODES `c000` inside `daytime_pop` (the
+    `*_rate_daytime` denominators and the loader's `daytime_pop_floor` = 100 pool filter).
+    These aren't rating factors but use the same data; confirm with compliance before
+    either reaches a filed model.
+  - Commercial-activity alternatives with no jobs component (commercial land-use share
+    from CoreLogic parcels, total business counts, structure count per resident) need
+    the same review before promotion.
 - **conditional association** — the bias test: whether a predictor's crime signal
   **survives conditioning on** a protected attribute (proxy check), reported alongside raw
   correlation. Soft-flags for human review; never an auto-drop (ADR 0004).
