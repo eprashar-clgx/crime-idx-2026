@@ -120,6 +120,13 @@ FEATURE_SOURCES = {
         key_col="geoid",
         feature_cols=("unq_liquor_stores_clips",),
     ),
+    "pawn_shops": FeatureSource(
+        name="pawn_shops",
+        backend="bq",
+        location="pawn_shops",        # → sql/pull/pawn_shops.sql
+        key_col="geoid",
+        feature_cols=("unq_pawn_shops_clips",),
+    ),
     # Transit is materialized out-of-band by transit.build.build_all_transit (backend="file").
     # Covers the 10 ingested cities only; null elsewhere on the national spine. feature_cols are
     # the candidate BG predictors (docs/features/transit_eda_plan.md §5); the non-geo ones are
@@ -201,6 +208,14 @@ STORE_DEFS = {
         "naics_6_digit_primary_code LIKE '4453%'\n"
         "     AND (LOWER(business_brand_name) LIKE '%liquor%'"
         " OR LOWER(business_name) LIKE '%liquor%')"
+    ),
+    "pawn_shops": (
+        # name match only: NAICS/SIC is unreliable (pawnshops filed under 522299/522298,
+        # 459510/453310, 458310 jewelry, 522291 consumer lending, 459110 guns, 522390).
+        # Excludes Pawnee (place name) and GA/AL "title pawn" car-title lenders.
+        "(LOWER(business_name) LIKE '%pawn%' OR LOWER(COALESCE(business_brand_name, '')) LIKE '%pawn%')\n"
+        "     AND NOT LOWER(business_name) LIKE '%pawnee%'\n"
+        "     AND NOT REGEXP_CONTAINS(LOWER(business_name), r'title\\s*pawn|auto\\s*pawn|car\\s*pawn')"
     ),
 }
 
@@ -478,6 +493,7 @@ ZERO_FILL = [
     "unq_convenience_stores_clips",
     "unq_gas_stations_clips",
     "unq_liquor_stores_clips",
+    "unq_pawn_shops_clips",
     # transit: null on the national spine / BGs with no stop = genuinely 0 transit
     "transit_stop_count",
     "transit_stop_density",
