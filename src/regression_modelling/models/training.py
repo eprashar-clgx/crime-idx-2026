@@ -45,6 +45,22 @@ DEFAULT_GBM_PARAMS = dict(n_estimators=500, learning_rate=0.03, num_leaves=31,
                           subsample=0.8, colsample_bytree=0.8, min_child_samples=40,
                           n_jobs=1, verbose=-1, importance_type="gain")
 
+#: Optuna-tuned LightGBM overrides per predictor set (ADR 0010 §7). Objective: city-mean
+#: LOCO r2_oos on wprop / 20 cities, subject to recall@10 >= untuned; 50 TPE trials, seed 0.
+#: City-mean r2 0.342 -> 0.358, recall@10 0.432 -> 0.438; wtotal city-mean r2 0.299 -> 0.323.
+TUNED_GBM_PARAMS = {
+    "selected_v1": dict(n_estimators=1000, learning_rate=0.013640227848836065, num_leaves=28,
+                        min_child_samples=16, subsample=0.52952221807425, subsample_freq=1,
+                        colsample_bytree=0.7459236178141202, reg_lambda=18.09648700746888,
+                        reg_alpha=0.049630776400581805, random_state=0),
+}
+
+#: XGBoost comparison defaults (ADR 0010 §8), matched to the LightGBM ones where the knobs
+#: line up: same trees/learning rate/sampling, depth-wise growth capped at 6.
+DEFAULT_XGB_PARAMS = dict(n_estimators=500, learning_rate=0.03, max_depth=6,
+                          subsample=0.8, colsample_bytree=0.8, min_child_weight=5,
+                          tree_method="hist", n_jobs=1, importance_type="gain")
+
 
 # =========================================================================== #
 # Fold protocols                                                              #
@@ -226,6 +242,23 @@ class GbmEstimator:
         return f"trees={self.params['n_estimators']}"
 
 
+class XgbEstimator(GbmEstimator):
+    """XGBoost on RAW predictors — the ADR 0010 comparison estimator. Same contract as
+    ``GbmEstimator``; ``gbm_params`` are XGBoost params when ``estimator="xgb"``."""
+
+    def __init__(self, params: dict | None = None):
+        self.params = {**DEFAULT_XGB_PARAMS, **(params or {})}
+        self.predictors = []
+        self.n_train = 0
+
+    def fit(self, train: pd.DataFrame, predictors: list[str], y: np.ndarray):
+        import xgboost as xgb
+        self.predictors = list(predictors)
+        self.n_train = int(len(train))
+        self.model = xgb.XGBRegressor(**self.params).fit(train[self.predictors], y)
+        return self
+
+
 def make_estimator(kind: str, demean: bool = False, ridge_alphas=None,
                    gbm_params: dict | None = None) -> Estimator:
     """Build a fresh estimator from a name. The orchestrator calls this per fold, so no
@@ -234,7 +267,9 @@ def make_estimator(kind: str, demean: bool = False, ridge_alphas=None,
         return LinearEstimator(kind, demean=demean, ridge_alphas=ridge_alphas)
     if kind == "gbm":
         return GbmEstimator(gbm_params)
-    raise ValueError(f"unknown estimator {kind!r} (expected 'ols', 'ridge' or 'gbm')")
+    if kind == "xgb":
+        return XgbEstimator(gbm_params)
+    raise ValueError(f"unknown estimator {kind!r} (expected 'ols', 'ridge', 'gbm' or 'xgb')")
 
 
 # =========================================================================== #

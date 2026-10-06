@@ -6,11 +6,18 @@ out-of-sample cities.
 
 The single decision is "is the SMALLER set acceptable?" (``StopRule.drop_ok``):
 
-- pooled ``r2_oos`` falls by less than ``r2_tol``, AND
+- ``r2_oos`` falls by less than ``r2_tol``, AND
 - ``recall@net`` is not worse in at least ``min_share_not_worse`` of held-out cities.
+
+``StopRule.score`` sets how ``r2_oos`` is aggregated: ``"pooled"`` (all rows; New York is
+~30% of them and dominates) or ``"city_mean"`` (each held-out city weighted equally).
 
 Backward elimination drops a predictor when that holds; forward selection adds one when it
 does NOT (i.e. leaving it out would cost too much). One rule, both directions.
+
+Per-step tolerance accumulates: ten drops of -0.004 each pass the rule yet cost 0.04. For
+backward runs ``StopRule.cum_tol`` adds a best-so-far guard — a drop is also refused if
+pooled ``r2_oos`` would fall more than ``cum_tol`` below the best run seen on the path.
 
 All candidate fits are scored on the same rows: the pool is reduced up front to rows
 complete in every candidate and fixed column, because ``run_cv`` otherwise drops NaNs
@@ -48,6 +55,10 @@ class StopRule:
     r2_tol: float = 0.005
     min_share_not_worse: float = 0.5
     recall_net: float = 0.10
+    #: backward only: max r2_oos shortfall vs the best run on the path (None = off)
+    cum_tol: float | None = None
+    #: r2_oos aggregation: "pooled" or "city_mean" (see ``score_run``)
+    score: str = "pooled"
 
     def drop_ok(self, delta: PairedDelta) -> bool:
         """True if the smaller set is acceptable versus the larger one."""
@@ -55,13 +66,31 @@ class StopRule:
                 and delta.share_not_worse >= self.min_share_not_worse)
 
 
-def paired_delta(smaller: FoldRun, larger: FoldRun, net: float = 0.10) -> PairedDelta:
-    """Compare two runs scored on the same rows, city by city."""
+def score_run(run: FoldRun, net: float = 0.10, score: str = "pooled") -> pd.Series:
+    """``r2_oos`` and ``recall`` of a run, pooled or as an equal-weight mean over cities."""
+    cs = city_scores(run, net)
+    if score == "pooled":
+        return cs.loc["POOLED", ["r2_oos", "recall"]].astype(float)
+    if score == "city_mean":
+        return cs.drop("POOLED")[["r2_oos", "recall"]].astype(float).mean()
+    raise ValueError("score must be 'pooled' or 'city_mean'")
+
+
+def paired_delta(smaller: FoldRun, larger: FoldRun, net: float = 0.10,
+                 score: str = "pooled") -> PairedDelta:
+    """Compare two runs scored on the same rows, city by city. ``d_r2`` is aggregated per
+    ``score``; the recall comparison is always per city."""
     a = city_scores(smaller, net)
     b = city_scores(larger, net)
     cities = [c for c in a.index if c != "POOLED" and c in b.index]
     not_worse = (a.loc[cities, "recall"] >= b.loc[cities, "recall"] - _EPS)
-    return PairedDelta(d_r2=float(a.loc["POOLED", "r2_oos"] - b.loc["POOLED", "r2_oos"]),
+    if score == "pooled":
+        d_r2 = a.loc["POOLED", "r2_oos"] - b.loc["POOLED", "r2_oos"]
+    elif score == "city_mean":
+        d_r2 = a.loc[cities, "r2_oos"].mean() - b.loc[cities, "r2_oos"].mean()
+    else:
+        raise ValueError("score must be 'pooled' or 'city_mean'")
+    return PairedDelta(d_r2=float(d_r2),
                        share_not_worse=float(not_worse.mean()) if cities else np.nan,
                        n_cities=len(cities))
 
@@ -121,7 +150,7 @@ def stepwise(pool: pd.DataFrame, category: str, candidates: Iterable[str], *,
         fixed/start column (e.g. the agency anchor) so the base model can be fit.
     rule : the ``StopRule`` (thresholds are its fields).
     estimator, split, mode, gbm_params, ridge_alphas, seed : passed to ``run_cv``.
-        For ``"gbm"`` a fixed ``random_state`` (= ``seed``) is added unless given.
+        For ``"gbm"``/``"xgb"`` a fixed ``random_state`` (= ``seed``) is added unless given.
     n_jobs : parallel candidate fits per step (joblib processes).
     log_name : if set, every fit is written to the experiment log under this name; only
         the base and chosen-step runs keep their predictions.
@@ -130,7 +159,7 @@ def stepwise(pool: pd.DataFrame, category: str, candidates: Iterable[str], *,
         raise ValueError("direction must be 'backward' or 'forward'")
     fixed = list(fixed)
     candidates = list(dict.fromkeys(c for c in candidates if c not in set(fixed)))
-    if estimator == "gbm":
+    if estimator in ("gbm", "xgb"):
         gbm_params = {"random_state": seed, **(gbm_params or {})}
     data = common_rows(pool, category, [*fixed, *candidates], mode)
     fit_kw = dict(estimator=estimator, split=split, mode=mode, gbm_params=gbm_params,
@@ -164,10 +193,11 @@ def stepwise(pool: pd.DataFrame, category: str, candidates: Iterable[str], *,
 
     base = _fit(data, category, [*fixed, *current], **fit_kw)
     _log(base, {"step": 0, "action": "base"}, True)
-    b0 = city_scores(base, rule.recall_net).loc["POOLED"]
+    b0 = score_run(base, rule.recall_net, rule.score)
+    best_r2 = float(b0.r2_oos)
     if verbose:
         print(f"  step 0  base  n_pred={len(fixed) + len(current):>2}  "
-              f"r2={b0.r2_oos:.4f}  recall@{rule.recall_net:g}={b0.recall:.3f}")
+              f"r2[{rule.score}]={b0.r2_oos:.4f}  recall@{rule.recall_net:g}={b0.recall:.3f}")
 
     rows: list[dict] = []
     step = 0
@@ -184,12 +214,14 @@ def stepwise(pool: pd.DataFrame, category: str, candidates: Iterable[str], *,
         step_rows = []
         for c, run in zip(options, runs):
             if backward:
-                d = paired_delta(run, base, rule.recall_net)
+                d = paired_delta(run, base, rule.recall_net, rule.score)
                 ok, score = rule.drop_ok(d), d.d_r2
             else:
-                d = paired_delta(base, run, rule.recall_net)
+                d = paired_delta(base, run, rule.recall_net, rule.score)
                 ok, score = not rule.drop_ok(d), -d.d_r2
-            sc = city_scores(run, rule.recall_net).loc["POOLED"]
+            sc = score_run(run, rule.recall_net, rule.score)
+            if backward and rule.cum_tol is not None and sc.r2_oos < best_r2 - rule.cum_tol:
+                ok = False
             step_rows.append({"step": step, "action": "drop" if backward else "add",
                               "predictor": c, "d_r2": d.d_r2,
                               "share_not_worse": d.share_not_worse, "eligible": ok,
@@ -210,6 +242,7 @@ def stepwise(pool: pd.DataFrame, category: str, candidates: Iterable[str], *,
             break
         (current.remove if backward else current.append)(chosen["predictor"])
         base = chosen["_run"]
+        best_r2 = max(best_r2, float(chosen["r2_oos"]))
         if verbose:
             print(f"  step {step}  {chosen['action']:<4} {chosen['predictor']:<40} "
                   f"d_r2={chosen['d_r2']:+.4f}  not_worse={chosen['share_not_worse']:.2f}  "
@@ -231,15 +264,15 @@ def confirm(pool: pd.DataFrame, category: str, full: Iterable[str],
     too (promote one set); False means it costs this estimator too much (promote both).
     """
     fixed, full, reduced = list(fixed), list(full), list(reduced)
-    if estimator == "gbm":
+    if estimator in ("gbm", "xgb"):
         gbm_params = {"random_state": seed, **(gbm_params or {})}
     data = common_rows(pool, category, [*fixed, *full, *reduced], mode)
     kw = dict(estimator=estimator, split=split, mode=mode, gbm_params=gbm_params,
               seed=seed, ridge_alphas=ridge_alphas)
     run_full, run_red = Parallel(n_jobs=2)(
         delayed(_fit)(data, category, [*fixed, *s], **kw) for s in (full, reduced))
-    d = paired_delta(run_red, run_full, rule.recall_net)
-    scores = pd.DataFrame({"full": city_scores(run_full, rule.recall_net).loc["POOLED"],
-                           "reduced": city_scores(run_red, rule.recall_net).loc["POOLED"]})
+    d = paired_delta(run_red, run_full, rule.recall_net, rule.score)
+    scores = pd.DataFrame({"full": score_run(run_full, rule.recall_net, rule.score),
+                           "reduced": score_run(run_red, rule.recall_net, rule.score)})
     return {"delta": d, "adopt_reduced": rule.drop_ok(d), "scores": scores,
             "full_run": run_full, "reduced_run": run_red}

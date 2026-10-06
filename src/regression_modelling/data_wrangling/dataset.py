@@ -18,6 +18,7 @@ from crime_blockgroup_mapping.scores import compute_weighted_scores
 from regression_modelling.constants import (
     TARGET_CATEGORIES, PREDICTOR_COLS, ZERO_FILL, MEDIAN_FILL, PROPERTY_MODEL_TRANSFORMS,
     DEMOGRAPHIC_MODEL_TRANSFORMS, ACS_TRANSIT_MODEL_TRANSFORMS, ROADWAY_MODEL_TRANSFORMS,
+    ROADWAY_MORPHOLOGY_MODEL_TRANSFORMS, NEIGHBOURHOOD_MODEL_TRANSFORMS,
     DIVISION_DUMMIES, APPROVED_EXISTING_PREDICTORS, AGENCY_ANCHOR_COL,
 )
 from regression_modelling.data_wrangling.features import assemble_features
@@ -101,6 +102,10 @@ def build_model_table(city: str, refresh: bool = False,
     # roadway model form: log1p distances/densities/ramp count -> roadway_*_log
     # (the "ours+risky+roadway" A/B set).
     df, _ = apply_transforms(df, spec=ROADWAY_MODEL_TRANSFORMS, has_transit_from=None)
+    # street-network morphology: x_ratio raw, deadend_share -> roadway_deadend_share_sqrt.
+    df, _ = apply_transforms(df, spec=ROADWAY_MORPHOLOGY_MODEL_TRANSFORMS, has_transit_from=None)
+    # neighbourhood context: log1p neighbour store totals, store densities and BG area.
+    df, _ = apply_transforms(df, spec=NEIGHBOURHOOD_MODEL_TRANSFORMS, has_transit_from=None)
 
     # log(count + 1) targets (primary); *_rate kept as validators
     for c in count_cols:

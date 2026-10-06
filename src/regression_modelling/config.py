@@ -116,6 +116,15 @@ def roadway_tiger_junctions_parquet(state_fips: str, county_fips: str, year: int
     return INTERIM_DIR / "roadway" / "tiger_junctions" / f"{state_fips}{county_fips}_{year}.parquet"
 
 
+def roadway_tiger_edge_ends_parquet(state_fips: str, county_fips: str, year: int = 2024):
+    """Cached endpoints of every TIGER road/path edge (MTFCC S1xxx) for one county.
+
+    data/interim/roadway/tiger_edge_ends/{state_fips}{county_fips}_{year}.parquet — two rows
+    per edge (from/to node id + EPSG:5070 x/y), the input to street-node degree.
+    """
+    return INTERIM_DIR / "roadway" / "tiger_edge_ends" / f"{state_fips}{county_fips}_{year}.parquet"
+
+
 def tiger_edges_zip(state_fips: str, county_fips: str, year: int = 2024):
     """Immutable downloaded TIGER/Line county EDGES zip (data/raw/roadway/tiger/).
 

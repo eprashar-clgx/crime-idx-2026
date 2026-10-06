@@ -140,18 +140,25 @@ flowchart TD
     owner), the pooled BG frame, the target (`make_target`) and named predictor sets.
   - `training.py` — *how well does it score a city we have not seen?* Fold protocols
     (**LOCO** extrapolation, **stratified 80/20** interpolation), estimators (RidgeCV /
-    OLS / LightGBM), and one orchestrator (`run_cv`) pairing any protocol with any
+    OLS / LightGBM / XGBoost; tuned params in `TUNED_GBM_PARAMS`), and one orchestrator (`run_cv`) pairing any protocol with any
     estimator. Each estimator owns its own preprocessing, so the **fold-local scaler**
     is leakage-safe by construction.
   - `results.py` — `FoldRun`, the result contract `training` produces and everything
     downstream consumes. Imported by both sides so neither depends on the other.
   - `metrics.py` — the metric surface (`r2_oos`, `mae`, `within_city_recall`, level
-    correlations, unrounded per-city `city_scores`). Reads a `FoldRun` and nothing else.
-  - `selection.py` — *which predictors earn their place?* Ridge-driven backward/forward
-    stepwise over `run_cv` under a paired, city-aware `StopRule`; `confirm` re-checks the
-    result with LightGBM (ADR 0010).
-  - `diagnostics.py` — *why does it fit, or not?* Per-city fit decomposition,
-    permutation importance, ridge coefficients, GBM gain.
+    correlations, unrounded per-city `city_scores`, and the reporting `scorecard` /
+    `scorecard_by_city` with pooled and city-mean r²). Reads a `FoldRun` and nothing else.
+  - `selection.py` — *which predictors earn their place?* Backward/forward stepwise over
+    `run_cv` (any estimator; LightGBM drives, Ridge cross-checks) under a paired, city-aware
+    `StopRule` scored pooled or city-mean, with a cumulative-drift guard; `confirm`
+    re-checks on the other target (ADR 0010).
+  - `tuning.py` — *which hyperparameters?* Parallel LOCO (`run_loco_parallel`, one process
+    per fold) and Optuna `tune` on pooled or city-mean r² with a `recall@10` floor.
+  - `diagnostics.py` — *why does it fit, or not?* Per-city fit decomposition (incl.
+    `r2_levelled`), permutation importance, ridge coefficients, GBM gain, held-out SHAP
+    (`loco_shap`, `shap_importance` by feature family / city).
+  - `figures.py` — deck figures for `02` (scorecard bars, per-city r², SHAP, city maps on
+    Census BG geometries); PNGs go to `docs/images/02/`.
   - `inference.py` — the explanatory path: standardized OLS, HC3 coefficient tables,
     **Moran's I** on residuals. Fits on the full sample; makes no held-out claim.
   - `incumbent.py` — the deployed agency-scale model expressed as a `FoldRun`, so it

@@ -42,7 +42,7 @@ def city_diag(run: FoldRun, pool: pd.DataFrame) -> pd.DataFrame:
       observed log rate) near zero, with a weak `within_corr`. There is simply not much
       variation to find.
     - **Too atypical or mis-levelled to place** — a large `level_err` (predicted minus
-      observed mean) or a large `feat_dist` (how far the city's standardized feature
+      observed mean, so a large gap between `r2_levelled` and `r2_oos`) or a large `feat_dist` (how far the city's standardized feature
       centroid sits from the pooled centre). The model can rank the city internally but
       puts the whole city at the wrong height.
 
@@ -61,13 +61,17 @@ def city_diag(run: FoldRun, pool: pd.DataFrame) -> pd.DataFrame:
     for city, h in run.scored.groupby("holdout_city"):
         y = np.log1p(h[f"{category}_rate"].astype(float))
         p = h["y_pred"].astype(float)
-        r2 = 1 - ((y - p) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+        sst = ((y - y.mean()) ** 2).sum()
+        err = p.mean() - y.mean()
+        r2 = 1 - ((y - p) ** 2).sum() / sst
         rows.append({
             "city": city, "n": len(h),
             "obs_mean": round(float(y.mean()), 2),
             "obs_sd": round(float(y.std(ddof=0)), 2),
-            "level_err": round(float(p.mean() - y.mean()), 2),
+            "level_err": round(float(err), 2),
             "r2_oos": round(float(r2), 3),
+            # r2 had the city mean been right: the gap to r2_oos is what the level miss costs
+            "r2_levelled": round(float(1 - ((y - p + err) ** 2).sum() / sst), 3),
             "within_corr": round(float(np.corrcoef(y, p)[0, 1]), 2),
             "feat_dist": round(float(fdist[city]), 2),
         })
@@ -137,3 +141,66 @@ def gbm_gain(run: FoldRun) -> pd.Series:
     gains = pd.concat([pd.Series(m.model.feature_importances_, index=run.predictors)
                        for m in run.fits.values()], axis=1).mean(axis=1)
     return (gains / gains.sum()).round(4)
+
+
+# =========================================================================== #
+# SHAP on held-out cities                                                     #
+# =========================================================================== #
+#: (family, test) in priority order — the first match wins, so neighbour lags of store
+#: counts land in "neighbourhood", not "stores".
+FEATURE_FAMILIES = [
+    ("agency anchor", lambda c: c.startswith("agency_lag_")),
+    ("neighbourhood", lambda c: c.endswith("_nbr") or "_nbr_" in c),
+    ("transit", lambda c: c.startswith("transit_")),
+    ("roadway", lambda c: c.startswith("roadway_")),
+    ("stores", lambda c: c.startswith("unq_")),
+    ("property distress", lambda c: c.startswith(("vacant_", "clip_"))),
+    ("imagery", lambda c: c.startswith(("roof_", "hardscapes_"))),
+]
+
+
+def feature_family(col: str) -> str:
+    """Reporting family of a predictor column; anything unmatched is demographic (ACS)."""
+    return next((fam for fam, test in FEATURE_FAMILIES if test(col)), "demographic")
+
+
+def loco_shap(run: FoldRun) -> pd.DataFrame:
+    """Exact TreeSHAP for every held-out BG, from the model that did NOT see its city.
+
+    One column per predictor plus ``_base`` (the fold's expected value) and
+    ``holdout_city``, indexed like ``run.scored``. Per row, the predictor columns plus
+    ``_base`` sum to ``y_pred``. Needs a tree run with fits kept (LightGBM or XGBoost);
+    80/20 runs have a single unnamed fold and keep no fits, so use LOCO.
+    """
+    if not run.fits:
+        raise ValueError("loco_shap needs a run fitted with keep_fits=True")
+    parts = []
+    for city, est in run.fits.items():
+        rows = run.scored.index[run.scored["holdout_city"] == city]
+        X = run.scored.loc[rows, est.predictors]
+        if hasattr(est.model, "booster_"):                       # LightGBM
+            contrib = est.model.predict(X, pred_contrib=True)
+        else:                                                    # XGBoost
+            import xgboost as xgb
+            contrib = est.model.get_booster().predict(xgb.DMatrix(X), pred_contribs=True)
+        df = pd.DataFrame(contrib, index=rows, columns=[*est.predictors, "_base"])
+        parts.append(df.assign(holdout_city=city))
+    out = pd.concat(parts)
+    return out.loc[run.scored.index.intersection(out.index)]
+
+
+def shap_importance(shap_df: pd.DataFrame, by_family: bool = False,
+                    by_city: bool = False):
+    """Mean |SHAP| in log-rate units.
+
+    ``by_family`` sums each row's signed contributions within a family before taking
+    |.| (grouped SHAP), so features that offset each other inside a family are not
+    double-counted. ``by_city`` returns a city x feature (or family) frame; otherwise a
+    Series sorted high to low.
+    """
+    vals = shap_df.drop(columns=["_base", "holdout_city"])
+    if by_family:
+        vals = vals.T.groupby(feature_family).sum().T
+    if by_city:
+        return vals.abs().groupby(shap_df["holdout_city"]).mean()
+    return vals.abs().mean().sort_values(ascending=False)

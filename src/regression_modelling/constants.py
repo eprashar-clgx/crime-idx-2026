@@ -66,6 +66,18 @@ TRANSIT_FEEDS = {
 TRANSIT_REPRESENTATIVE_DATE = "2025-06-04"
 
 
+# ── Neighbourhood context (data_wrangling/neighbourhood.py) ─────────────────────────────
+# Queen-contiguity neighbour summaries for features WITHOUT an existing spatial summary
+# (vacancy/liens/foreclosures/transactions already carry *_lag6; population has rings), plus
+# per-km² store densities. Raw inputs are read from the demographic + store sources.
+NBR_SUFFIX = "_nbr"
+DENSITY_SUFFIX = "_per_km2"
+MIN_AREA_KM2 = 0.05               # area floor for densities (tiny BGs would explode the ratio)
+NEIGHBOUR_MEAN_INPUTS = ("own_pct", "det_pct", "lap_pct", "moved1yr_pct")     # NaN-aware mean
+NEIGHBOUR_SUM_INPUTS = ("unq_convenience_stores_clips", "unq_gas_stations_clips",
+                        "unq_liquor_stores_clips")                            # neighbour total
+STORE_DENSITY_INPUTS = NEIGHBOUR_SUM_INPUTS
+
 FEATURE_SOURCES = {
     "vacancy": FeatureSource(
         name="vacancy",
@@ -182,6 +194,23 @@ FEATURE_SOURCES = {
             "roadway_ramp_count",
             "roadway_arterial_density",
             "roadway_intersection_density",
+            "roadway_x_ratio",
+            "roadway_deadend_share",
+        ),
+    ),
+    # Neighbourhood context — materialized out-of-band by neighbourhood.build_neighbourhood
+    # (backend="file"). National coverage (every BG). CANDIDATE only — see
+    # NEIGHBOURHOOD_MODEL_PREDICTORS; enters a fit only via explicit selection.
+    "neighbourhood": FeatureSource(
+        name="neighbourhood",
+        backend="file",
+        location="build via regression_modelling.data_wrangling.neighbourhood.build_neighbourhood",
+        key_col="geoid",
+        feature_cols=(
+            "bg_area_km2",
+            *(f"{c}{NBR_SUFFIX}" for c in NEIGHBOUR_MEAN_INPUTS),
+            *(f"{c}{NBR_SUFFIX}" for c in NEIGHBOUR_SUM_INPUTS),
+            *(f"{c}{DENSITY_SUFFIX}" for c in STORE_DENSITY_INPUTS),
         ),
     ),
 }
@@ -415,6 +444,31 @@ ROADWAY_PREDICTORS = [
 ROADWAY_MODEL_TRANSFORMS = {c: "log1p" for c in ROADWAY_PREDICTORS}
 ROADWAY_MODEL_PREDICTORS = [f"{c}_log" for c in ROADWAY_PREDICTORS]
 
+# Street-network morphology (TIGER EDGES node degree; docs/features/roadway_plan.md §4 R3b).
+# Kept separate from ROADWAY_PREDICTORS so the existing "ours+risky+roadway" set is unchanged.
+#   roadway_x_ratio        4-way-or-more junctions / all street junctions (grid-ness, ∈ [0,1])
+#   roadway_deadend_share  dead-end nodes / (dead ends + junctions) (cul-de-sac-ness, ∈ [0,1])
+ROADWAY_MORPHOLOGY_PREDICTORS = ["roadway_x_ratio", "roadway_deadend_share"]
+# x_ratio is a bounded share -> raw; deadend_share is right-skewed (most BGs near 0) -> sqrt.
+ROADWAY_MORPHOLOGY_MODEL_TRANSFORMS = {"roadway_x_ratio": "identity",
+                                       "roadway_deadend_share": "sqrt"}
+ROADWAY_MORPHOLOGY_MODEL_PREDICTORS = ["roadway_x_ratio", "roadway_deadend_share_sqrt"]
+
+# Neighbourhood-context model form: neighbour share means stay raw (bounded); neighbour store
+# totals and store densities are right-skewed counts/ratios -> log1p. bg_area_km2 is a size
+# column (log1p -> bg_area_km2_log) carried for exposure work, not a default candidate.
+NEIGHBOURHOOD_MODEL_TRANSFORMS = {
+    "bg_area_km2": "log1p",
+    **{f"{c}{NBR_SUFFIX}": "identity" for c in NEIGHBOUR_MEAN_INPUTS},
+    **{f"{c}{NBR_SUFFIX}": "log1p" for c in NEIGHBOUR_SUM_INPUTS},
+    **{f"{c}{DENSITY_SUFFIX}": "log1p" for c in STORE_DENSITY_INPUTS},
+}
+NEIGHBOURHOOD_MODEL_PREDICTORS = [
+    *(f"{c}{NBR_SUFFIX}" for c in NEIGHBOUR_MEAN_INPUTS),
+    *(f"{c}{NBR_SUFFIX}_log" for c in NEIGHBOUR_SUM_INPUTS),
+    *(f"{c}{DENSITY_SUFFIX}_log" for c in STORE_DENSITY_INPUTS),
+]
+
 # Active fit-set: demographic (model form: log1p population ring count) + property (model
 # form: log distress shares + spatial lags + store counts) + transit (model form) + imagery.
 # PREDICTOR_COLS is DERIVED so it cannot drift from its parts. The raw DEMOGRAPHIC_PREDICTORS
@@ -479,6 +533,40 @@ PREDICTOR_SETS = {
     # A/B candidate: baseline "ours" + risky-facility transit + roadway (model form).
     "ours+risky+roadway": (list(PREDICTOR_COLS) + RISKY_TRANSIT_MODEL_PREDICTORS
                            + ROADWAY_MODEL_PREDICTORS),
+    # ADR 0010 smoke test: Ridge backward selection on the 20-city wprop pool. Kept as the
+    # reference rung the selected set is measured against.
+    "final10": [
+        "vacant_pct_log", "own_pct", "transit_service_intensity_logc", "det_pct",
+        "unq_convenience_stores_clips", "roadway_nearest_interstate_m_log", "lap_pct",
+        "moved1yr_pct", "roadway_ramp_count_log", "transit_has_transit",
+    ],
+    # ADR 0010 promoted set: the screened candidates minus det_pct / det_pct_nbr. LightGBM
+    # backward selection was run as a diagnostic only — both the pooled- and city-mean-
+    # scored trims lost on wtotal, so the full screened set ships. Frozen explicitly
+    # (not derived) so the audited list cannot drift with the family constants.
+    "selected_v1": [
+        # demographic
+        "moved1yr_pct", "own_pct", "lap_pct", "in_household_pct", "city_centers_dist",
+        "pop_est_5mile_log", "pop_ch_1mile",
+        # property distress + stores
+        "vacant_pct_log", "vacant_pct_lag6_log", "clip_foreclosure_pct_log",
+        "clip_foreclosure_pct_lag6_log", "clip_transaction_pct_log",
+        "clip_transaction_pct_lag6_log", "unq_convenience_stores_clips",
+        "unq_gas_stations_clips", "unq_liquor_stores_clips",
+        # transit (GTFS)
+        "transit_has_transit", "transit_service_intensity_logc",
+        "transit_risky_stop_count_log", "transit_overnight_stop_count_log",
+        # imagery
+        "roof_condition_avg", "hardscapes_pct_avg",
+        # roadway
+        "roadway_nearest_ramp_m_log", "roadway_nearest_interstate_m_log",
+        "roadway_arterial_density_log", "roadway_intersection_density_log",
+        "roadway_x_ratio", "roadway_deadend_share_sqrt",
+        # neighbourhood (queen-contiguity neighbour means / sums)
+        "own_pct_nbr", "lap_pct_nbr", "moved1yr_pct_nbr",
+        "unq_convenience_stores_clips_nbr_log", "unq_gas_stations_clips_nbr_log",
+        "unq_liquor_stores_clips_nbr_log",
+    ],
 }
 
 ZERO_FILL = [
@@ -510,10 +598,17 @@ ZERO_FILL = [
     "roadway_ramp_count",
     "roadway_arterial_density",
     "roadway_intersection_density",
+    "roadway_deadend_share",        # no street nodes in the BG -> no dead ends observed
+    # neighbourhood: neighbour store totals / own-BG store densities, 0 = none observed
+    *(f"{c}{NBR_SUFFIX}" for c in NEIGHBOUR_SUM_INPUTS),
+    *(f"{c}{DENSITY_SUFFIX}" for c in STORE_DENSITY_INPUTS),
 ]                                                       # 0 = none observed
 MEDIAN_FILL = [
     "city_centers_dist", "pop_est_5mile", "pop_ch_1mile",  # 0 would be wrong
     "transit_nearest_stop_m",                              # distance; 0 = stop at centroid
     "in_household_pct", "det_pct",                         # incumbent approved shares (bounded)
     "roadway_nearest_ramp_m", "roadway_nearest_interstate_m",  # distance; 0 = ramp at centroid
+    "roadway_x_ratio",              # undefined (no junctions) -> city median, not 0 (= all-T)
+    "bg_area_km2",
+    *(f"{c}{NBR_SUFFIX}" for c in NEIGHBOUR_MEAN_INPUTS),  # islands (no neighbour) / all-NaN
 ]

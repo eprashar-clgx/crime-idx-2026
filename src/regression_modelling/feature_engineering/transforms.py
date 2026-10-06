@@ -16,6 +16,7 @@ import pandas as pd
 from regression_modelling.constants import TRANSIT_MODEL_TRANSFORMS
 
 LOG_SUFFIX = "_log"
+SQRT_SUFFIX = "_sqrt"
 CENTERED_SUFFIX = "_logc"           # log1p, mean-centered on the served (has_transit=1) mass
 HAS_TRANSIT_COL = "transit_has_transit"
 _HAS_TRANSIT_SOURCE = "transit_stop_count"
@@ -32,7 +33,9 @@ def apply_transforms(df, spec=TRANSIT_MODEL_TRANSFORMS, has_transit_from=_HAS_TR
     Parameters
     ----------
     df : DataFrame with the raw predictor columns.
-    spec : dict {raw_col: "log1p" | "identity"} — defaults to TRANSIT_MODEL_TRANSFORMS.
+    spec : dict {raw_col: "log1p" | "sqrt" | "identity"} — defaults to
+        TRANSIT_MODEL_TRANSFORMS. "sqrt" (-> `{col}_sqrt`) is for bounded shares piled up
+        near 0, where log1p barely compresses.
     has_transit_from : column whose >0 test defines the `transit_has_transit` indicator;
         pass None to skip the indicator.
     hurdle : if True, emit the intensive-margin feature (`hurdle_col`) as a log1p value
@@ -45,7 +48,7 @@ def apply_transforms(df, spec=TRANSIT_MODEL_TRANSFORMS, has_transit_from=_HAS_TR
     Returns
     -------
     (out_df, model_cols) where model_cols lists the columns to feed a model / correlation
-    (the `{col}_log`/`{col}_logc` names for log1p features, the raw name for identity
+    (the `{col}_log`/`{col}_logc`/`{col}_sqrt` names for transformed features, the raw name for identity
     features, plus `transit_has_transit`). Missing input columns are skipped with a warning.
     """
     out = df.copy()
@@ -75,6 +78,10 @@ def apply_transforms(df, spec=TRANSIT_MODEL_TRANSFORMS, has_transit_from=_HAS_TR
             else:
                 name = f"{col}{LOG_SUFFIX}"
                 out[name] = logv
+            model_cols.append(name)
+        elif form == "sqrt":
+            name = f"{col}{SQRT_SUFFIX}"
+            out[name] = np.sqrt(out[col].clip(lower=0))
             model_cols.append(name)
         elif form == "identity":
             model_cols.append(col)

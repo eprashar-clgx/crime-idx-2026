@@ -102,6 +102,34 @@ transit (`feature_engineering.transforms.apply_transforms`, the hurdle form, and
 | 4 | `roadway_arterial_density` | km of principal + minor arterial per km², clipped to BG (interstates/freeways excluded — already in #2) | FHWA HPMS `f_system` 3–4 | R2 | `log1p` |
 | 5 | `roadway_intersection_density` | street junctions (≥ 3 incident `S1200`/`S1400` edges) per km² | TIGER EDGES topology | R3 (contested) | `log1p` — exploratory, verify sign |
 
+### 4b. Street-network morphology (R3b, added 2026-10-01)
+
+Two node-degree shape features from the same TIGER EDGES layer. Motivated by Mao et al. 2025
+(Detroit street morphology; single city, in-sample) and kept separate from the five above
+(`ROADWAY_MORPHOLOGY_PREDICTORS`) so the existing `ours+risky+roadway` set is unchanged.
+
+| # | Raw feature | Definition | Model form | NaN fill |
+|---|---|---|---|---|
+| 6 | `roadway_x_ratio` | X / (T + X): share of junctions that are 4+-way (grid vs tree) | raw ∈ [0,1] | no junctions → city median |
+| 7 | `roadway_deadend_share` | D / (D + T + X): share of street nodes that are dead ends | `sqrt` | no street nodes → 0 |
+
+Node kinds use `deg_street` (incident `S1200`/`S1400` edges) and `deg_all` (incident `S1xxx`
+edges of any class): T = 3, X = ≥ 4, dead end D = `deg_street == 1` and `deg_all == 1` (a
+cul-de-sac continued by an alley/walkway is not a dead end). Nodes are assigned to the BG
+they fall *within*. Degree is computed after stacking the city's counties plus same-state
+counties within 500 m, so streets cut by a county line aren't false dead ends; state lines
+are not buffered (~4% of DC's dead ends lie within 200 m of the line).
+
+Results (20 cities, LOCO over the final-10 + anchor, deterministic GBM):
+
+| Feature | Within-city ρ vs `cl_total_rate` (median) | Note |
+|---|---|---|
+| `x_ratio` | +0.21 (positive in 16/20) | ρ 0.35 with intersection density |
+| `deadend_share` | −0.13 (negative in 16/20) | |
+
+Adding both: Ridge r2 +0.003 (15/20 cities up); GBM pooled r2 −0.002, recall 0.399 → 0.407.
+`x_density`, `t_density`, alley and service shares were tested and dropped (redundant or ≈ 0).
+
 **Why HPMS for #4, not TIGER `S1200`.** TIGER's `S1200` ("secondary road") only covers
 *numbered* US/state/county highways; most big-city arterials (e.g. Chicago's grid main
 streets) are coded `S1400` alongside every residential street, with no hierarchy inside it.

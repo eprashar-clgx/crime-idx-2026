@@ -186,6 +186,69 @@ def city_scores(run: FoldRun, net: float = 0.10) -> pd.DataFrame:
     return pd.DataFrame(rows).set_index("holdout")
 
 
+def _scores_on_log_scale(run: FoldRun) -> bool:
+    """True when ``y_pred`` is a log1p(rate) prediction, so r2/mae against log1p(rate)
+    mean something: the absolute ``lograte`` runs, and the incumbent run
+    (``split="existing"``), which stores log1p of its served rate."""
+    return run.mode == "lograte" or run.split == "existing"
+
+
+def scorecard(run: FoldRun, nets=(0.10, 0.25), safe_below: float = 0.50) -> pd.Series:
+    """One reporting row for a run: fit under BOTH aggregations, plus rank capture.
+
+    - ``r2_pooled`` — one r2 over every held-out BG. New York is ~30% of rows and
+      between-city level differences count, so it rewards levelling big cities.
+    - ``r2_city`` — mean of the per-city r2 (each city weighted 1/n_cities); within-city
+      fit only. This is the tuning objective (ADR 0010).
+    - ``mae`` — pooled, log1p(rate) scale.
+    - ``recall@N`` — pooled membership over every city's observed worst-N BGs;
+      ``recall@N_city`` — the per-city recall averaged with equal city weight.
+    - ``called_safe`` — share of the observed worst-``max(nets)`` BGs the model ranks
+      below its within-city median (the costly miss; lower is better), pooled.
+    """
+    if not _scores_on_log_scale(run):
+        raise ValueError(f"scorecard needs log-rate predictions (got mode {run.mode!r})")
+    rate_col = _rate_col(run.mode, run.category)
+    s = run.scored
+    y = np.log1p(s[rate_col].astype(float))
+    p = s["y_pred"].astype(float)
+
+    def _r2(yy, pp):
+        ss_tot = float(((yy - yy.mean()) ** 2).sum())
+        return 1 - float(((yy - pp) ** 2).sum()) / ss_tot if ss_tot else np.nan
+
+    obs_pct = s.groupby("holdout_city")[rate_col].rank(pct=True)
+    mod_pct = s.groupby("holdout_city")["y_pred"].rank(pct=True)
+    per_city_r2 = pd.Series({c: _r2(y[i], p[i])
+                             for c, i in s.groupby("holdout_city").groups.items()})
+
+    out = {"n": len(s), "n_cities": int(s["holdout_city"].nunique()),
+           "r2_pooled": _r2(y, p), "r2_city": float(per_city_r2.mean()),
+           "mae": float((y - p).abs().mean())}
+    for net in nets:
+        danger = obs_pct >= 1 - net
+        hit = (mod_pct >= 1 - net)[danger]
+        tag = f"recall@{round(net * 100)}"
+        out[tag] = float(hit.mean())
+        out[f"{tag}_city"] = float(hit.groupby(s.loc[danger, "holdout_city"]).mean().mean())
+    widest = obs_pct >= 1 - max(nets)
+    out["called_safe"] = float((mod_pct[widest] < safe_below).mean())
+    return pd.Series(out)
+
+
+def scorecard_by_city(run: FoldRun, nets=(0.10, 0.25),
+                      safe_below: float = 0.50) -> pd.DataFrame:
+    """`scorecard` for each held-out city separately (``r2`` = that city's r2). Works on
+    the incumbent run too, which `city_scores` rejects."""
+    from dataclasses import replace
+    rows = {city: scorecard(replace(run, scored=g, fits={}), nets, safe_below)
+            for city, g in run.scored.groupby("holdout_city")}
+    out = pd.DataFrame(rows).T
+    out = out.drop(columns=["n_cities"] + [c for c in out if c.endswith("_city")])
+    out["n"] = out["n"].astype(int)
+    return out.rename(columns={"r2_pooled": "r2"})
+
+
 def fold_metrics(run: FoldRun, x_unit: str = "population",
                  capture_at: float = 0.20) -> pd.DataFrame:
     """Per-holdout-city + pooled metrics table for any `FoldRun`.
@@ -293,6 +356,8 @@ def compare_runs(runs: dict[str, FoldRun], x_unit: str = "population") -> pd.Dat
             "mode": run.mode,
             "n": int(pooled["n"]),
             "r2_oos": pooled.get("r2_oos"),
+            "r2_city": (round(float(city_scores(run).drop("POOLED")["r2_oos"].mean()), 3)
+                        if run.mode == "lograte" else np.nan),
             "within_corr2": within_corr2_pooled(run),
             "between_r": between_city_level_r(run),
             "skill": pooled.get("skill"),

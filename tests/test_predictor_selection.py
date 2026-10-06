@@ -130,3 +130,44 @@ def test_forward_adds_signal_only(tmp_path):
 def test_forward_needs_a_base():
     with pytest.raises(ValueError):
         stepwise(_pool(), "wprop", ["x1"], direction="forward", verbose=False)
+
+
+def _weak_pool(k=6, n_city=6, n=200, seed=0):
+    """y = sum of k weak predictors; each drop costs a little, all drops cost a lot."""
+    rng = np.random.default_rng(seed)
+    parts = []
+    for i in range(n_city):
+        w = rng.normal(size=(k, n))
+        level = rng.normal(scale=0.3)
+        log_rate = 2 + level + 0.3 * w.sum(axis=0) + rng.normal(scale=0.5, size=n)
+        parts.append(pd.DataFrame({"city": f"c{i}", "geoid": [f"c{i}_{j}" for j in range(n)],
+                                   "population": 1000, "anchor": 2 + level,
+                                   "wprop_rate": np.expm1(log_rate),
+                                   **{f"w{j}": w[j] for j in range(k)}}))
+    return pd.concat(parts, ignore_index=True)
+
+
+def test_cum_tol_stops_drift():
+    df, cands = _weak_pool(), [f"w{j}" for j in range(6)]
+    loose = StopRule(r2_tol=0.5, min_share_not_worse=0.0)
+    kw = dict(direction="backward", fixed=["anchor"], n_jobs=1, verbose=False)
+    free = stepwise(df, "wprop", cands, rule=loose, **kw)
+    guarded = stepwise(df, "wprop", cands,
+                       rule=StopRule(r2_tol=0.5, min_share_not_worse=0.0, cum_tol=0.05), **kw)
+    r2 = lambda res: city_scores(res.final_run).loc["POOLED", "r2_oos"]
+    base = r2(stepwise(df, "wprop", cands, rule=loose, max_steps=0, **kw))
+    assert free.selected == [] and r2(free) < base - 0.05
+    assert len(guarded.selected) > 0 and r2(guarded) >= base - 0.05
+
+
+def test_paired_delta_city_mean_weights_cities_equally():
+    df = _pool()
+    truth = np.log1p(df["wprop_rate"])
+    noise = np.random.default_rng(2).normal(scale=2, size=len(df)) * (df["city"] == "c0")
+    big_city_hurt = _run(df, truth + noise)          # only c0 is degraded
+    perfect = _run(df, truth)
+    d_city = paired_delta(big_city_hurt, perfect, score="city_mean").d_r2
+    cs = city_scores(big_city_hurt).drop("POOLED")
+    assert d_city == pytest.approx(cs["r2_oos"].mean() - 1.0)
+    with pytest.raises(ValueError):
+        paired_delta(perfect, perfect, score="nope")

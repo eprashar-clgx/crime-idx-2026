@@ -1,6 +1,6 @@
 # ADR 0010 — Predictor selection protocol
 
-- **Status:** Accepted (2026-09)
+- **Status:** Accepted (2026-09); amended 2026-10 (Amendment 1)
 - **Date:** 2026-09-30
 - **Related:** ADR 0003 (LOCO as the extrapolation protocol), ADR 0007 (lagged-agency
   anchor), ADR 0008 (module boundaries; notebooks are drivers)
@@ -43,6 +43,43 @@ notebook (`02`) or overfit the LOCO folds.
    of the log.
 8. **After the freeze:** add XGBoost as a comparison estimator, rerun `02`, then tune the
    preferred model with Optuna on `r2_oos` subject to `recall@10` ≥ the untuned model.
+
+## Amendment 1 — what selection actually did (2026-10)
+
+Running the protocol on the 36 screened candidates (20 `wprop` cities) changed four of the
+decisions above. The promoted result is `PREDICTOR_SETS["selected_v1"]` (34 features +
+anchor) with `TUNED_GBM_PARAMS["selected_v1"]`, reported in `02_regression_prediction`.
+
+1. **LightGBM drives selection; Ridge is the cross-check** (replaces §2). Ridge backward kept
+   11 features and disagreed with LightGBM on which mattered (it kept `det_pct`, `own_pct_nbr`,
+   the interstate distance). The deployed model is a GBM, so the GBM's own backward path
+   decides. LOCO folds run in parallel (`tuning.run_loco_parallel`).
+2. **Cumulative-drift guard** (extends §3). `StopRule.cum_tol` refuses a drop that takes the
+   score below best-so-far − `cum_tol` (0.005). Without it, a run of individually tolerable
+   drops can quietly erode the score.
+3. **Score on city-mean, not pooled** (`StopRule.score`, `paired_delta(score=)`; amends §3).
+   New York is ~32% of rows, and its BGs sit at the 86th percentile of the other cities'
+   intersection density. Pooled-scored selection (34 → 14) reached pooled r² 0.451 but lost in
+   15 of 20 cities (Seattle −0.15). City-mean r² (each held-out city weighted equally) asks the
+   deployment question: how well do we rank a typical new city. Both r² are reported everywhere.
+4. **Promote the screened set, not a stepwise subset** (amends §2's adoption rule).
+   City-mean backward selection (36 → 22) matched the full set within noise on `wprop`
+   (city-mean r² 0.357 vs 0.354) but failed the `wtotal` confirmation (§5); a rerun on 34
+   kept 18, again with no clear gain. The
+   screened set, minus `det_pct`/`det_pct_nbr` (collinear with `own_pct`/`lap_pct`; dropped by
+   review), is promoted as one set for both targets. With few decisions taken, this also keeps
+   selection bias (§6) small.
+5. **Estimator and tuning** (resolves §8). Untuned XGBoost tied LightGBM (pooled r² 0.449 vs
+   0.449), so LightGBM stays. Optuna (50 TPE trials, `tuning.tune`) maximises **city-mean**
+   r² subject to `recall@10` ≥ the untuned model. A pooled objective won pooled r² (0.443
+   vs 0.433) by fitting New York (r² 0.25 vs 0.19) at the other 19 cities' expense (mean 0.351
+   vs 0.367), and was worse on `wtotal` (city-mean 0.309 vs 0.323). The city-mean tune lifted city-mean r² on both targets (`wprop` 0.342 → 0.358,
+   `wtotal` 0.299 → 0.323). Its parameters are regularisers (bagging, L2 = 18, slower
+   learning rate), so LOCO gains with 80/20 flat.
+6. **Tried and parked:** within-city percentile roadway features (+0.005 city-mean r²,
+   mostly New York; adds a city-relative transform at scoring time) and a vacancy ×
+   risky-transit interaction (flat on `wprop`). Pre-screen exclusions stand: liens,
+   `veh0_pct`, ramp count.
 
 ## Considered options
 
