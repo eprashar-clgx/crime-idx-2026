@@ -257,3 +257,43 @@ def pred_vs_obs(run: FoldRun, cities: list[str], ncols: int | None = None):
         ax.set_visible(False)
     fig.tight_layout()
     return fig
+
+
+def variance_split_plot(pool: pd.DataFrame, category: str, splits: pd.DataFrame,
+                        city_col: str = "city", seed: int = 0):
+    """Left: every BG's observed log1p(rate) per city (dots), city means (black bars) and
+    the grand mean (red), cities sorted by mean. Right: between vs within share of the
+    variance per target, from ``metrics.variance_split`` rows indexed by target."""
+    y = np.log1p(pool[_rate_col("lograte", category)].astype(float))
+    g = pool[city_col]
+    means = y.groupby(g).mean().sort_values()
+    fig, (ax, axr) = plt.subplots(1, 2, figsize=(15, 5.5),
+                                  gridspec_kw={"width_ratios": [4, 1]})
+    rng = np.random.default_rng(seed)
+    for i, city in enumerate(means.index):
+        v = y[g == city]
+        ax.scatter(i + rng.uniform(-0.3, 0.3, len(v)), v, s=3, alpha=0.18, color="#2c7fb8",
+                   edgecolor="none")
+        ax.hlines(means[city], i - 0.38, i + 0.38, color="black", lw=2.5, zorder=5)
+    ax.axhline(y.mean(), color="crimson", ls="--", lw=1.5, label="mean of all BGs")
+    ax.set_xticks(range(len(means)), [_label(c) for c in means.index], rotation=60,
+                  ha="right", fontsize=8)
+    ax.set_ylabel(f"observed log1p({category} rate), per BG")
+    ax.set_title("Each dot is a block group; black bar = its city's mean")
+    ax.legend(loc="upper left", fontsize=8)
+
+    s = splits[["between_share", "within_share"]]
+    x = np.arange(len(s))
+    axr.bar(x, s["within_share"], color="#2c7fb8", label="within cities")
+    axr.bar(x, s["between_share"], bottom=s["within_share"], color="#bdbdbd",
+            label="between cities")
+    for i, (b, w) in enumerate(s.values):
+        axr.text(i, w / 2, f"{w:.0%}", ha="center", va="center", color="white",
+                 fontweight="bold")
+        axr.text(i, w + b / 2, f"{b:.0%}", ha="center", va="center", fontsize=9)
+    axr.set_xticks(x, [f"{t}\n({int(n)} cities)" for t, n in zip(s.index, splits["n_groups"])])
+    axr.set_ylim(0, 1); axr.set_ylabel("share of BG variance (log rate)")
+    axr.set_title("Where the variance is")
+    axr.legend(loc="lower center", bbox_to_anchor=(0.5, -0.32), fontsize=8, ncol=2)
+    fig.tight_layout()
+    return fig

@@ -221,3 +221,6 @@ __marimo__/
 # generic `build/` rule above for this specific dir).
 !src/regression_modelling/data_wrangling/sql/build/
 !src/regression_modelling/data_wrangling/sql/build/*.sql
+
+# Working PPT decks (local only for now)
+docs/business_context/decks/

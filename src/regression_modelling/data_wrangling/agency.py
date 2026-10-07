@@ -31,20 +31,28 @@ import pandas as pd
 
 from crime_blockgroup_mapping.constants import GCS_ROOT, UCR_YEAR
 from regression_modelling.config import agency_parquet, features_parquet
-from regression_modelling.constants import DEMOGRAPHIC_MODEL_TRANSFORMS, PROPERTY_MODEL_TRANSFORMS
+from regression_modelling.constants import (
+    DEMOGRAPHIC_MODEL_TRANSFORMS, PREDICTOR_SETS, PROPERTY_MODEL_TRANSFORMS,
+)
 from regression_modelling.data_wrangling.sources import get_gcs_fs, read_sav_from_gcs
 
-# Raw BG predictor columns (in bg_predictors.parquet) rolled up to agency level.
-# Identity columns keep their name; the property distress shares get log1p'd into
-# `{col}_log` AFTER aggregation (see PROPERTY_MODEL_TRANSFORMS).
-_IDENTITY_COLS = [
-    "moved1yr_pct", "own_pct", "lap_pct", "city_centers_dist",
-    "pop_est_5mile", "pop_ch_1mile",
-    "unq_convenience_stores_clips", "unq_gas_stations_clips", "unq_liquor_stores_clips",
-    "roof_condition_avg", "roof_debris_pct_avg", "hardscapes_pct_avg",
-    "roof_missing_material_pct",
+# Model-form -> raw column for the log1p'd predictors (``vacant_pct_log`` -> ``vacant_pct``).
+_LOG_SPECS = {**PROPERTY_MODEL_TRANSFORMS, **DEMOGRAPHIC_MODEL_TRANSFORMS}
+_RAW_OF = {f"{c}_log": c for c in _LOG_SPECS}
+
+# Our national agency set = the promoted BG set (``selected_v1``) minus the families that
+# only exist in the POC cities: GTFS transit, roadway morphology (HPMS/TIGER builds) and the
+# adjacent-BG neighbour means (redundant once BGs are averaged to an agency anyway).
+# DERIVED so it cannot drift from the BG model.
+NATIONAL_PREDICTORS = [
+    f for f in PREDICTOR_SETS["selected_v1"]
+    if not f.startswith(("transit_", "roadway_")) and "_nbr" not in f
 ]
-_LOG_COLS = list(PROPERTY_MODEL_TRANSFORMS)  # vacant/liens/foreclosure (+ lag6) shares
+# Raw BG columns rolled up (population-weighted); log1p is applied AFTER aggregation.
+_ROLLUP_COLS = [_RAW_OF.get(f, f) for f in NATIONAL_PREDICTORS]
+
+# Transit's national stand-in: ACS commute-mode shares, reshaped (heavy zeros, right skew).
+TRANSIT_PROXY_PREDICTORS = ["bus_pct_log", "train_pct_log", "has_transit"]
 
 # ACS journey-to-work "train" = streetcar + subway + railroad (the colleague's
 # train_pct definition); bus_pct is a direct ACS column.
@@ -143,21 +151,25 @@ def rollup_predictors_to_agency(refresh: bool = False) -> pd.DataFrame:
     Joins the national BG predictor table (``data/interim/features/bg_predictors``)
     to the block-population crosswalk, averages every raw predictor to the agency
     grain, then log1p-transforms the property distress shares into ``{col}_log``
-    (aggregate raw -> transform). Transit is intentionally excluded here — it is
+    (aggregate raw -> transform). Columns are exactly ``NATIONAL_PREDICTORS``; a cache
+    missing any of them is rebuilt. Transit is intentionally excluded here — it is
     POC-city-only at BG level and is replaced by ACS commute-mode proxies
     (``load_transit_proxies``). Returns a frame indexed by ``akey``.
     """
     path = agency_parquet("agency_predictors")
     if path.exists() and not refresh:
-        return pd.read_parquet(path)
+        cached = pd.read_parquet(path)
+        if set(NATIONAL_PREDICTORS) <= set(cached.columns):
+            return cached[NATIONAL_PREDICTORS]
+        print("agency_predictors cache predates NATIONAL_PREDICTORS; rebuilding")
 
     bg = pd.read_parquet(features_parquet("bg_predictors"))
     if "geoid" not in bg.columns:
         raise KeyError("bg_predictors.parquet must carry a 'geoid' block-group key")
     bg = bg.rename(columns={"geoid": "bg_key"})
 
-    raw_cols = [c for c in _IDENTITY_COLS + _LOG_COLS if c in bg.columns]
-    missing = [c for c in _IDENTITY_COLS + _LOG_COLS if c not in bg.columns]
+    raw_cols = [c for c in _ROLLUP_COLS if c in bg.columns]
+    missing = [c for c in _ROLLUP_COLS if c not in bg.columns]
     if missing:
         print(f"note: {len(missing)} raw predictor(s) absent from bg_predictors: {missing}")
 
@@ -172,11 +184,11 @@ def rollup_predictors_to_agency(refresh: bool = False) -> pd.DataFrame:
     # aggregate raw -> then log1p, matching the BG feature build (dataset.build_model_table):
     # property distress shares (+ spatial lags) and the right-skewed pop_est_5mile ring count
     # (ADR 0006). Single source of truth = the constants' transform specs.
-    log_specs = {**PROPERTY_MODEL_TRANSFORMS, **DEMOGRAPHIC_MODEL_TRANSFORMS}
-    for col in log_specs:
+    for col in _LOG_SPECS:
         if col in agency.columns:
             agency[f"{col}_log"] = np.log1p(agency[col].clip(lower=0))
-    agency = agency.drop(columns=[c for c in log_specs if c in agency.columns])
+    agency = agency.drop(columns=[c for c in _LOG_SPECS if c in agency.columns])
+    agency = agency[[f for f in NATIONAL_PREDICTORS if f in agency.columns]]
 
     path.parent.mkdir(parents=True, exist_ok=True)
     agency.to_parquet(path)
@@ -240,6 +252,21 @@ def load_transit_proxies(refresh: bool = False) -> pd.DataFrame:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(path)
+    return out
+
+
+def add_transit_proxy_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Add ``TRANSIT_PROXY_PREDICTORS`` from raw ``bus_pct`` / ``train_pct`` (0-100 shares).
+
+    ``has_transit`` flags any non-zero transit commuting; ``log1p`` compresses the right
+    skew while keeping the zeros. Missing shares stay missing (``has_transit`` too).
+    """
+    out = df.copy()
+    known = out[["bus_pct", "train_pct"]].notna().all(axis=1)
+    out["has_transit"] = ((out["bus_pct"] > 0) | (out["train_pct"] > 0)).astype(float)
+    out.loc[~known, "has_transit"] = np.nan
+    out["bus_pct_log"] = np.log1p(out["bus_pct"].clip(lower=0))
+    out["train_pct_log"] = np.log1p(out["train_pct"].clip(lower=0))
     return out
 
 

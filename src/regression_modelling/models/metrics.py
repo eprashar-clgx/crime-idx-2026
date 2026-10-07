@@ -366,3 +366,46 @@ def compare_runs(runs: dict[str, FoldRun], x_unit: str = "population") -> pd.Dat
                                             nets=(0.10,)).loc["POOLED", "recall@top10"],
         })
     return pd.DataFrame(rows).set_index("run")
+
+
+def variance_split(y: pd.Series, groups: pd.Series) -> pd.Series:
+    """Split the total sum of squares of ``y`` into between-group and within-group shares.
+
+    ``between_share`` is the variance carried by the group means: it equals the pooled r²
+    of an oracle that predicts every row as its group's TRUE mean, i.e. the most a model
+    can earn from getting city levels exactly right. ``within_share`` is the rest, and is
+    the only thing a per-city r² measures.
+    """
+    y = pd.Series(np.asarray(y, dtype=float), index=groups.index)
+    ss_tot = float(((y - y.mean()) ** 2).sum())
+    ss_within = float(((y - y.groupby(groups).transform("mean")) ** 2).sum())
+    between = 1 - ss_within / ss_tot if ss_tot else np.nan
+    return pd.Series({"n": len(y), "n_groups": int(groups.nunique()),
+                      "between_share": between, "within_share": 1 - between})
+
+
+def within_city_fit_parts(run: FoldRun) -> pd.DataFrame:
+    """Per city: why r² (1 − SSE/SST, as served) differs from the ranking signal.
+
+    ``offset`` is mean(pred) − mean(obs) on the log scale; ``obs_sd``/``pred_sd`` the
+    within-city spreads; ``corr2`` the squared Pearson (the r² a free per-city linear
+    recalibration would reach); ``r2`` the as-served r²; ``r2_no_offset`` the r² after
+    removing only the level offset. corr2 ≥ r2_no_offset ≥ r2: the gaps are what the
+    level miss and the spread mismatch cost.
+    """
+    rate_col = _rate_col(run.mode, run.category)
+    s = run.scored
+    y = np.log1p(s[rate_col].astype(float))
+    p = s["y_pred"].astype(float)
+    rows = {}
+    for city, idx in s.groupby("holdout_city").groups.items():
+        yy, pp = y[idx], p[idx]
+        var = float(((yy - yy.mean()) ** 2).mean())
+        dy, dp = yy - yy.mean(), pp - pp.mean()
+        r = float(np.corrcoef(yy, pp)[0, 1])
+        rows[city] = {"n": len(idx), "offset": float(pp.mean() - yy.mean()),
+                      "obs_sd": float(yy.std(ddof=0)), "pred_sd": float(pp.std(ddof=0)),
+                      "corr2": r ** 2,
+                      "r2": 1 - float(((yy - pp) ** 2).mean()) / var,
+                      "r2_no_offset": 1 - float(((dy - dp) ** 2).mean()) / var}
+    return pd.DataFrame(rows).T

@@ -118,3 +118,37 @@ def test_scorecard_by_city_matches_city_scores(run):
 def test_city_diag_levelled_r2_bounds_r2(run):
     d = diagnostics.city_diag(run, _pool())
     assert (d["r2_levelled"] >= d["r2_oos"] - 1e-9).all()
+
+
+def test_variance_split_matches_city_mean_oracle():
+    from regression_modelling.models.metrics import variance_split
+    rng = np.random.default_rng(0)
+    g = pd.Series(np.repeat(["a", "b", "c"], 200))
+    y = pd.Series(g.map({"a": 0.0, "b": 1.0, "c": 3.0}) + rng.normal(0, 1, 600))
+    vs = variance_split(y, g)
+    oracle = y.groupby(g).transform("mean")
+    r2 = 1 - ((y - oracle) ** 2).sum() / ((y - y.mean()) ** 2).sum()
+    assert vs["between_share"] == pytest.approx(r2)
+    assert vs["between_share"] + vs["within_share"] == pytest.approx(1)
+    assert vs["n_groups"] == 3
+
+
+def test_variance_split_plot_draws():
+    from regression_modelling.models.metrics import variance_split
+    pool = _pool()
+    splits = pd.DataFrame({"wprop": variance_split(np.log1p(pool["wprop_rate"]), pool["city"])}).T
+    fig = figures.variance_split_plot(pool, "wprop", splits)
+    assert len(fig.axes) == 2
+
+
+def test_within_city_fit_parts_orders_r2(run):
+    from regression_modelling.models.metrics import scorecard_by_city, within_city_fit_parts
+    s = run.scored.copy()
+    s["y_pred"] = 0.5 * s["y_pred"] + 0.7          # compress and shift
+    shifted = FoldRun(scored=s, fits={}, mode=run.mode, split=run.split,
+                      category=run.category, predictors=run.predictors)
+    parts = within_city_fit_parts(shifted)
+    assert (parts["corr2"] >= parts["r2_no_offset"] - 1e-12).all()
+    assert (parts["r2_no_offset"] >= parts["r2"] - 1e-12).all()
+    by_city = scorecard_by_city(shifted)["r2"]
+    assert parts["r2"].values == pytest.approx(by_city.reindex(parts.index).values)

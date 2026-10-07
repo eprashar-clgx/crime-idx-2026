@@ -147,7 +147,7 @@ flowchart TD
     downstream consumes. Imported by both sides so neither depends on the other.
   - `metrics.py` — the metric surface (`r2_oos`, `mae`, `within_city_recall`, level
     correlations, unrounded per-city `city_scores`, and the reporting `scorecard` /
-    `scorecard_by_city` with pooled and city-mean r²). Reads a `FoldRun` and nothing else.
+    `scorecard_by_city` with pooled and city-mean r²; `variance_split`, `within_city_fit_parts`). Reads a `FoldRun` and nothing else.
   - `selection.py` — *which predictors earn their place?* Backward/forward stepwise over
     `run_cv` (any estimator; LightGBM drives, Ridge cross-checks) under a paired, city-aware
     `StopRule` scored pooled or city-mean, with a cumulative-drift guard; `confirm`
@@ -157,12 +157,16 @@ flowchart TD
   - `diagnostics.py` — *why does it fit, or not?* Per-city fit decomposition (incl.
     `r2_levelled`), permutation importance, ridge coefficients, GBM gain, held-out SHAP
     (`loco_shap`, `shap_importance` by feature family / city).
-  - `figures.py` — deck figures for `02` (scorecard bars, per-city r², SHAP, city maps on
+  - `figures.py` — deck figures for `02` (within/between variance split, scorecard bars, per-city r², SHAP, city maps on
     Census BG geometries); PNGs go to `docs/images/02/`.
   - `inference.py` — the explanatory path: standardized OLS, HC3 coefficient tables,
     **Moran's I** on residuals. Fits on the full sample; makes no held-out claim.
   - `incumbent.py` — the deployed agency-scale model expressed as a `FoldRun`, so it
     scores through the same rank metrics as the refresh.
+  - `agency_comparison.py` — the national **agency-level** Ridge comparison for `03`: the
+    incumbent's governance-stripped predictor sets vs our rolled-up national set, scored
+    as mean ± SD over repeated random splits, with forward/backward stepwise re-run
+    inside each split; PNGs go to `docs/images/03/`.
 - **bias_testing** — verify predictors correlate with crime and not with protected
   attributes such as race.
 - **logging** — the experiment log: record run configuration, scores and out-of-sample
