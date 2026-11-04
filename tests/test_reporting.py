@@ -115,6 +115,21 @@ def test_scorecard_by_city_matches_city_scores(run):
     assert "r2_city" not in by and "recall@10_city" not in by
 
 
+def test_spearman_city_is_mean_of_within_city_rank_corr(run):
+    from scipy.stats import spearmanr
+    s = run.scored
+    y = np.log1p(s["wprop_rate"].astype(float))
+    per_city = {c: spearmanr(y[i], s.loc[i, "y_pred"]).statistic
+                for c, i in s.groupby("holdout_city").groups.items()}
+    by = scorecard_by_city(run)
+    assert np.allclose(by.loc[list(per_city), "spearman"], list(per_city.values()))
+    assert scorecard(run)["spearman_city"] == pytest.approx(np.mean(list(per_city.values())))
+    # rank-only: a constant shift and a positive rescale of every prediction leave it unchanged
+    moved = FoldRun(scored=s.assign(y_pred=3 * s["y_pred"] + 5), fits={}, mode=run.mode,
+                    split=run.split, category=run.category, predictors=run.predictors)
+    assert scorecard(moved)["spearman_city"] == pytest.approx(scorecard(run)["spearman_city"])
+
+
 def test_city_diag_levelled_r2_bounds_r2(run):
     d = diagnostics.city_diag(run, _pool())
     assert (d["r2_levelled"] >= d["r2_oos"] - 1e-9).all()

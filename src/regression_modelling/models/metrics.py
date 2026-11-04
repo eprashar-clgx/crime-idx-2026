@@ -19,6 +19,7 @@ ADR 0005 follow-up.
 """
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 from regression_modelling.models.dataset import _rate_col
 from regression_modelling.models.results import FoldRun
@@ -200,6 +201,8 @@ def scorecard(run: FoldRun, nets=(0.10, 0.25), safe_below: float = 0.50) -> pd.S
       between-city level differences count, so it rewards levelling big cities.
     - ``r2_city`` — mean of the per-city r2 (each city weighted 1/n_cities); within-city
       fit only. This is the tuning objective (ADR 0010).
+    - ``spearman_city`` — mean of the per-city Spearman rank correlation (blocks ranked
+      within their own city; equal city weight). Ranking only: blind to level and spread.
     - ``mae`` — pooled, log1p(rate) scale.
     - ``recall@N`` — pooled membership over every city's observed worst-N BGs;
       ``recall@N_city`` — the per-city recall averaged with equal city weight.
@@ -221,9 +224,13 @@ def scorecard(run: FoldRun, nets=(0.10, 0.25), safe_below: float = 0.50) -> pd.S
     mod_pct = s.groupby("holdout_city")["y_pred"].rank(pct=True)
     per_city_r2 = pd.Series({c: _r2(y[i], p[i])
                              for c, i in s.groupby("holdout_city").groups.items()})
+    # Ranks are taken within each city (ties -> average rank), never across cities.
+    per_city_rho = pd.Series({c: spearmanr(y[i], p[i]).statistic
+                              for c, i in s.groupby("holdout_city").groups.items()})
 
     out = {"n": len(s), "n_cities": int(s["holdout_city"].nunique()),
            "r2_pooled": _r2(y, p), "r2_city": float(per_city_r2.mean()),
+           "spearman_city": float(per_city_rho.mean()),
            "mae": float((y - p).abs().mean())}
     for net in nets:
         danger = obs_pct >= 1 - net
@@ -238,12 +245,13 @@ def scorecard(run: FoldRun, nets=(0.10, 0.25), safe_below: float = 0.50) -> pd.S
 
 def scorecard_by_city(run: FoldRun, nets=(0.10, 0.25),
                       safe_below: float = 0.50) -> pd.DataFrame:
-    """`scorecard` for each held-out city separately (``r2`` = that city's r2). Works on
-    the incumbent run too, which `city_scores` rejects."""
+    """`scorecard` for each held-out city separately (``r2`` = that city's r2,
+    ``spearman`` = its rank correlation). Works on the incumbent run too, which
+    `city_scores` rejects."""
     from dataclasses import replace
     rows = {city: scorecard(replace(run, scored=g, fits={}), nets, safe_below)
             for city, g in run.scored.groupby("holdout_city")}
-    out = pd.DataFrame(rows).T
+    out = pd.DataFrame(rows).T.rename(columns={"spearman_city": "spearman"})
     out = out.drop(columns=["n_cities"] + [c for c in out if c.endswith("_city")])
     out["n"] = out["n"].astype(int)
     return out.rename(columns={"r2_pooled": "r2"})
