@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import io
 from pathlib import Path
+from typing import Iterable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -295,5 +296,87 @@ def variance_split_plot(pool: pd.DataFrame, category: str, splits: pd.DataFrame,
     axr.set_ylim(0, 1); axr.set_ylabel("share of BG variance (log rate)")
     axr.set_title("Where the variance is")
     axr.legend(loc="lower center", bbox_to_anchor=(0.5, -0.32), fontsize=8, ncol=2)
+    fig.tight_layout()
+    return fig
+
+
+# --------------------------------------------------------------------------- #
+# Predictor diagnostics (05)                                                  #
+# --------------------------------------------------------------------------- #
+def diverging_heatmap(table: pd.DataFrame, title: str = "", fmt: str = "{:+.2f}",
+                      cbar_label: str = "", highlight: Iterable[str] = (),
+                      vmax: float | None = None):
+    """Annotated rows x columns heatmap centred at 0 (red = positive, blue = negative).
+    Row labels in ``highlight`` are bolded. NaN cells are left blank."""
+    t = table.astype(float)
+    vmax = vmax or float(np.nanmax(np.abs(t.values))) or 1.0
+    fig, ax = plt.subplots(figsize=(1.0 * t.shape[1] + 3, 0.34 * t.shape[0] + 1.6))
+    im = ax.imshow(t.values, cmap="RdBu_r", vmin=-vmax, vmax=vmax, aspect="auto")
+    for (i, j), v in np.ndenumerate(t.values):
+        if np.isfinite(v):
+            ax.text(j, i, fmt.format(v), ha="center", va="center", fontsize=7,
+                    color="white" if abs(v) > 0.6 * vmax else "black")
+    ax.set_xticks(range(t.shape[1]), [str(c) for c in t.columns], rotation=35, ha="right",
+                  fontsize=8)
+    ax.set_yticks(range(t.shape[0]), [_label(str(r)) for r in t.index], fontsize=8)
+    hl = set(highlight)
+    for lab, r in zip(ax.get_yticklabels(), t.index):
+        if r in hl:
+            lab.set_fontweight("bold")
+    fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label=cbar_label)
+    ax.set_title(title)
+    fig.tight_layout()
+    return fig
+
+
+def dropout_bars(deltas: pd.DataFrame, metrics=("r2_pooled", "spearman_city"),
+                 title: str = ""):
+    """Worth per family from ``attribution.dropout_deltas``: one panel per metric, bar =
+    accuracy lost when the family is removed, whisker = ±1 SD over seeds."""
+    fig, axes = plt.subplots(1, len(metrics), figsize=(4.6 * len(metrics), 0.38 * len(deltas) + 1.6),
+                             sharey=True, squeeze=False)
+    d = deltas.sort_values(f"d_{metrics[0]}")
+    y = np.arange(len(d))
+    for ax, m in zip(axes.flat, metrics):
+        err = d[f"sd_{m}"] if f"sd_{m}" in d else None
+        ax.barh(y, d[f"d_{m}"], xerr=err, color=[FAMILY_COLORS.get(f, "#999") for f in d.index],
+                error_kw=dict(lw=0.8, capsize=2))
+        sd = err if err is not None else pd.Series(0.0, index=d.index)
+        for yi, v, e in zip(y, d[f"d_{m}"], sd):
+            ax.text(v + (e if v >= 0 else -e), yi, f"  {v:+.3f}  ", va="center",
+                    ha="left" if v >= 0 else "right", fontsize=7)
+        ax.margins(x=0.18)
+        ax.axvline(0, color="black", lw=0.6)
+        ax.set_xlabel(f"drop in {m.replace('_', ' ')} without family")
+        ax.spines[["top", "right"]].set_visible(False)
+    axes.flat[0].set_yticks(y, d.index)
+    fig.suptitle(title)
+    fig.tight_layout()
+    return fig
+
+
+def feature_rho_dots(tables: dict[str, pd.DataFrame], features: list[str] | None = None,
+                     title: str = ""):
+    """Per feature: Spearman of the raw feature with crime inside each named city (one
+    marker per ``attribution.city_feature_table``) and the median over the training
+    cities (grey bar). Shows where a city's relationship departs from the rest."""
+    first = next(iter(tables.values()))
+    feats = features or [f for f in first.index if np.isfinite(first.loc[f, "local_rho"])]
+    feats = feats[::-1]
+    fig, ax = plt.subplots(figsize=(7.5, 0.3 * len(feats) + 1.4))
+    y = np.arange(len(feats))
+    ax.barh(y, first.loc[feats, "others_rho"].astype(float), color="#d9d9d9",
+            label="median of other cities")
+    markers = ["o", "D", "s", "^"]
+    colors = ["#1b9e77", "#d95f02", "#7570b3", "#e7298a"]
+    for k, (city, t) in enumerate(tables.items()):
+        ax.scatter(t.loc[feats, "local_rho"].astype(float), y, marker=markers[k % 4],
+                   color=colors[k % 4], s=28, zorder=3, label=_label(city))
+    ax.set_yticks(y, feats, fontsize=8)
+    ax.axvline(0, color="black", lw=0.6)
+    ax.set_xlabel("Spearman of feature with observed log rate, within city")
+    ax.legend(fontsize=8, frameon=False, loc="lower right")
+    ax.set_title(title)
+    ax.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     return fig

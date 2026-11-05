@@ -157,8 +157,19 @@ flowchart TD
   - `diagnostics.py` — *why does it fit, or not?* Per-city fit decomposition (incl.
     `r2_levelled`), permutation importance, ridge coefficients, GBM gain, held-out SHAP
     (`loco_shap`, `shap_importance` by feature family / city).
+  - `attribution.py` — *which predictors work, and where?* (`05`). Three lenses per
+    feature family: **usage** (grouped SHAP), **worth** (`family_dropout`: LOCO refit
+    without the family over several seeds on identical rows → `dropout_deltas`,
+    `dropout_by_city`) and **direction** (`family_direction`: within-city Spearman of the
+    family's SHAP vs observed). `city_feature_table` repeats them per feature for one
+    held-out city (permutation worth, local vs other-city feature–crime Spearman).
+  - `levelling.py` — post-model city levelling: moves each held-out city's predictions
+    toward its lagged agency (UCR) rate with a mapping learned on the other cities
+    (`relevel`: `ratio` / `loglin`, optional blend `weight`; `oracle` = ceiling). Changes
+    level-sensitive scores only, never within-city ranking.
   - `figures.py` — deck figures for `02` (within/between variance split, scorecard bars, per-city r², SHAP, city maps on
-    Census BG geometries); PNGs go to `docs/images/02/`.
+    Census BG geometries) and `05` (diverging city × family heatmaps, drop-out bars,
+    feature-Spearman dots); PNGs go to `docs/images/02/` and `docs/images/05/`.
   - `inference.py` — the explanatory path: standardized OLS, HC3 coefficient tables,
     **Moran's I** on residuals. Fits on the full sample; makes no held-out claim.
   - `incumbent.py` — the deployed agency-scale model expressed as a `FoldRun`, so it
