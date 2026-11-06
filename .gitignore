@@ -1,4 +1,5 @@
 # Repo specific folders
+/data/temp
 /data/interim
 /data/raw
 /data/processed
