@@ -1,0 +1,39 @@
+name: Data quality
+description: Source data checks, coverage gaps, reconciliation
+labels: [data-quality]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: Which source, cities or tables are affected, and what looks wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Task checklist
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Acceptance criteria (e.g. counts reconciled, affected cities listed, fix or exclusion logged)
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: >-
+        Brief for the session that picks this up, so it doesn't re-read every doc.
+        Usually written by the planning session. Keep it short; point to files, don't copy them.
+      value: |
+        **Read first:** files + line ranges (and what to skip)
+        **Data:** BQ tables or data/interim caches, keys (geoid), grain, target and city pool
+        **Decisions:** already made; names to use (docs/CONTEXT.md terms)
+        **Gotchas:** conflicts with other issues, slow notebooks, domain rules at risk, open questions

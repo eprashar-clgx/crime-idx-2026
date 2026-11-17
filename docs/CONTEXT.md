@@ -2,6 +2,8 @@
 
 Shared vocabulary for `crime-idx-2026`. Names here are load-bearing: use them
 exactly in code, docs, and discussion. Update this file when a concept changes.
+Retired or wrong aliases go in [Terms to avoid](#terms-to-avoid), which
+`.github/skills/domain-glossary/lint_glossary.py` checks (see the `domain-glossary` skill).
 
 ## Guiding structure
 
@@ -73,6 +75,12 @@ and levels badly).
 
 - **`r2_oos`** — out-of-sample 1 − SSE/SST on the served scale, pooled over held-out
   rows. The headline fit metric. Falls when predictions are systematically shifted.
+- **`r2_pooled`** — `metrics.scorecard`'s name for the same pooled `r2_oos`, over every
+  held-out BG on the `log1p` scale. Big cities dominate it and between-city level counts.
+  One of the two headline fit numbers. The two code names are tracked for unification.
+- **`r2_city`** — mean of the per-city `r2_oos`, each held-out city weighted equally. It
+  scores within-city fit only and is the tuning objective (ADR 0010). It is a
+  **within-city R²** (a skill score), not a squared correlation.
 - **`adj_r2_in`** — in-sample adjusted R² for a single fold. A fit-quality check on the
   training side, never a headline.
 - **`mae`** — mean absolute error, reported on the **`log1p` weighted-rate scale** in
@@ -128,6 +136,9 @@ and levels badly).
 
 ## Domain nouns (do not rename)
 
+- **spatial lag** — a `*_lag6` column: the predictor pooled over the BG's **6 nearest
+  neighbouring BGs** (centroid distance, same state, self excluded). Not a time lag.
+  `*_nbr` columns are adjacent-BG means or sums. See `docs/features/property_distress.md`.
 - **`geoid`** — the 12-char block-group join key. Everything normalizes to it before
   merging (`bg_key` → `geoid`).
 - **7 primary crimes** — violent: murder, rape, robbery, assault; property:
@@ -252,3 +263,14 @@ and levels badly).
   which also records the **rejected structural cross-city leveler** (C′, unlearnable from
   5–10 cities) and the chosen **observed lagged-agency anchor** (Model D) for restoring
   between-city level.
+
+## Terms to avoid
+
+Aliases that are **always** wrong for the term. `lint_glossary.py` reads only the
+backticked text in **Avoid**. Context-dependent words belong in the definitions above, not
+here. When renaming a term, move the old name into **Avoid**; don't delete it.
+
+| Term | Avoid | Code | Source |
+|---|---|---|---|
+| `within_corr2` | `within_R2`, `corr2` | `metrics.within_corr2_pooled` | Metric vocabulary (retired names) |
+| spatial lag | `6-year lag`, `six-year lag`, `6 years earlier` | `*_lag6` | `docs/features/property_distress.md` §2 |

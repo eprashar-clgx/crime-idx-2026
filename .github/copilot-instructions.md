@@ -12,12 +12,19 @@ Read before non-trivial work:
   strategy, 0008 module boundaries, 0010 predictor selection).
 - `docs/features/*.md`: feature definitions, hypotheses, backlog.
 
-## Work tracking
+## Work tracking and workflow
 
-- **Open work lives in GitHub Issues** (`gh issue list`), labelled `modelling`,
-  `predictors`, `data-quality`, `compliance` and `parked`. Check open issues at session start.
+- **Every change goes issue → branch → PR → squash merge.** Never commit directly to `main`.
+  Follow the `issue-workflow` skill (`.github/skills/issue-workflow/SKILL.md`).
+- **Open work lives in GitHub Issues** (`gh issue list`), labelled `modelling`, `predictors`,
+  `data-quality`, `compliance` and `repo`, plus `parked` for work on hold. Check open issues at session start.
+- Each issue gets its own worktree and Copilot session: `start-issue N` (`bin/start-issue`).
+  The root checkout stays on `main` for planning.
+- Issues carry a `### Context` brief for the session that picks them up. Read it first and
+  open only the files it lists.
 - Log new follow-ups as issues (`gh issue create`). Don't leave them only in chat or in session todos.
-- Reference issues as `#N` in commits; close them from the commit or PR that finishes them.
+- Vocabulary: follow the `domain-glossary` skill. Lint changed docs and notebooks with
+  `python3 .github/skills/domain-glossary/lint_glossary.py <paths>`.
 
 ## Environment and commands
 
@@ -76,6 +83,7 @@ Read before non-trivial work:
 ## Working style
 
 - Discuss requirements before large implementations. Keep explanations concise.
-- Commit only when asked. Include the `Co-authored-by: Copilot` trailer.
-- Tests: a few focused cases in `tests/` for new behaviour. Run the full suite before committing.
+- Commit on the issue branch in small steps, ending messages with `Refs #N` and the
+  `Co-authored-by: Copilot` trailer. Open the PR with `Closes #N`; merge only when the user approves.
+- Tests: a few focused cases in `tests/` for new behaviour. Run the full suite before opening a PR.
 - Update `docs/architecture.md`, `docs/CONTEXT.md` or an ADR when a module, concept or decision changes.
