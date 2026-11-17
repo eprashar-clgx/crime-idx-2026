@@ -273,4 +273,4 @@ here. When renaming a term, move the old name into **Avoid**; don't delete it.
 | Term | Avoid | Code | Source |
 |---|---|---|---|
 | `within_corr2` | `within_R2`, `corr2` | `metrics.within_corr2_pooled` | Metric vocabulary (retired names) |
-| spatial lag | `6-year lag`, `six-year lag`, `6 years earlier` | `*_lag6` | `docs/features/property_distress.md` §2 |
+| spatial lag | `6-year lag`, `6-year lags`, `6-yr lag`, `6-yr lags`, `six-year lag`, `6 years earlier` | `*_lag6` | `docs/features/property_distress.md` §2 |
