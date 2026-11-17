@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Start (or resume) work on a GitHub issue in its own worktree + Copilot session.
+#
+#   start-issue <issue#> [slug] [--no-code] [--no-copilot] [--dry-run]
+#
+# - Branch/worktree name: <issue#>-<slug>; slug defaults to the issue title, shortened.
+# - New worktrees branch from origin/main at ../<repo>.worktrees/<branch>.
+# - Gitignored data/{raw,interim,processed,temp} and .venv are symlinked from the root checkout.
+# - Re-running for an existing worktree reuses it and resumes the session.
+set -euo pipefail
+
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+n="" slug="" code=1 launch=1 dry=0
+for a in "$@"; do
+  case "$a" in
+    -h|--help) usage ;;
+    --no-code) code=0 ;;
+    --no-copilot) launch=0 ;;
+    --dry-run) dry=1 ;;
+    -*) echo "unknown option: $a" >&2; usage 1 ;;
+    *) if [[ -z "$n" ]]; then n="$a"; elif [[ -z "$slug" ]]; then slug="$a"; else usage 1; fi ;;
+  esac
+done
+[[ "$n" =~ ^[0-9]+$ ]] || usage 1
+
+run() { if (( dry )); then echo "+ $*"; else "$@"; fi; }
+
+# Main checkout, located from this script (follows symlinks), so it works from any folder or worktree
+here="$(dirname "$(readlink -f "$0")")"
+root="$(cd "$(git -C "$here" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+cd "$root"
+
+read -r state title < <(gh issue view "$n" --json state,title --jq '.state + " " + .title')
+[[ "$state" == "OPEN" ]] || { echo "Issue #$n is $state" >&2; exit 1; }
+
+if [[ -z "$slug" ]]; then
+  slug=""
+  for w in $(printf '%s' "$title" | tr '[:upper:]' '[:lower:]' | sed -E 's/\([^)]*\)//g; s/[^a-z0-9]+/ /g'); do
+    case "$w" in a|an|the|to|of|for|with|and|in|on|from|into|by|vs) continue ;; esac
+    (( ${#slug} + ${#w} + 1 > 30 )) && [[ -n "$slug" ]] && break
+    slug="${slug:+$slug-}$w"
+  done
+fi
+branch="$n-$slug"
+
+existing="$(git worktree list --porcelain | awk -v b="refs/heads/$n-" '$1 == "worktree" {wt = $2} $1 == "branch" && index($2, b) == 1 {print wt; exit}')"
+if [[ -n "$existing" ]]; then
+  wt="$existing"; branch="$(git -C "$wt" branch --show-current)"
+  echo "Reusing worktree for #$n: $wt ($branch)"
+else
+  wt="$(dirname "$root")/$(basename "$root").worktrees/$branch"
+  echo "#$n: $title"
+  echo "Creating worktree $wt on branch $branch from origin/main"
+  run git fetch -q origin
+  if git show-ref --verify -q "refs/heads/$branch"; then
+    run git worktree add -q "$wt" "$branch"
+  else
+    run git worktree add -q "$wt" -b "$branch" origin/main
+  fi
+fi
+
+# Paths resolve from the checkout root (crime_blockgroup_mapping/config.py) and data/ is
+# gitignored apart from data/README.md, so worktrees share the root checkout's data and venv.
+for d in raw interim processed temp; do
+  [[ -e "$wt/data/$d" || -L "$wt/data/$d" ]] && continue
+  run mkdir -p "$root/data/$d" "$wt/data"
+  run ln -s "$root/data/$d" "$wt/data/$d"
+done
+if [[ -d "$root/.venv" && ! -e "$wt/.venv" ]]; then
+  run ln -s "$root/.venv" "$wt/.venv"
+fi
+
+if (( code )) && command -v code >/dev/null; then run code -n "$wt"; fi
+
+# A session exists if this script launched one (marker in the worktree's git dir)
+# or one was named after the branch by hand.
+marker="$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null)/start-issue-session" || marker=""
+has_session() {
+  [[ -n "$marker" && -f "$marker" ]] ||
+    grep -qxsF "name: $branch" "${COPILOT_HOME:-$HOME/.copilot}"/session-state/*/workspace.yaml
+}
+
+if (( launch )); then
+  run cd "$wt"
+  if has_session; then
+    run exec copilot --resume "$branch"
+  else
+    (( dry )) || [[ -z "$marker" ]] || touch "$marker"
+    run exec copilot --name "$branch" -i "Pick up issue #$n using the issue-workflow skill. Read the issue's Context brief first and open only the files it lists; widen the search only if the brief falls short. This session is already in its worktree on branch $branch."
+  fi
+else
+  echo "Next: cd $wt && copilot --name $branch"
+fi
